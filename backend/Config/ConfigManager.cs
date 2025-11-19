@@ -10,27 +10,38 @@ namespace NzbWebDAV.Config;
 public class ConfigManager
 {
     private readonly Dictionary<string, string> _config = new();
+    private readonly SemaphoreSlim _configLock = new(1, 1);
     public event EventHandler<ConfigEventArgs>? OnConfigChanged;
 
     public async Task LoadConfig()
     {
-        await using var dbContext = new DavDatabaseContext();
-        var configItems = await dbContext.ConfigItems.ToListAsync();
-        lock (_config)
+        await _configLock.WaitAsync();
+        try
         {
+            await using var dbContext = new DavDatabaseContext();
+            var configItems = await dbContext.ConfigItems.ToListAsync();
             _config.Clear();
             foreach (var configItem in configItems)
             {
                 _config[configItem.ConfigName] = configItem.ConfigValue;
             }
         }
+        finally
+        {
+            _configLock.Release();
+        }
     }
 
     public string? GetConfigValue(string configName)
     {
-        lock (_config)
+        _configLock.Wait();
+        try
         {
             return _config.TryGetValue(configName, out string? value) ? value : null;
+        }
+        finally
+        {
+            _configLock.Release();
         }
     }
 
@@ -43,7 +54,8 @@ public class ConfigManager
 
     public void UpdateValues(List<ConfigItem> configItems)
     {
-        lock (_config)
+        _configLock.Wait();
+        try
         {
             foreach (var configItem in configItems)
             {
@@ -53,8 +65,12 @@ public class ConfigManager
             OnConfigChanged?.Invoke(this, new ConfigEventArgs
             {
                 ChangedConfig = configItems.ToDictionary(x => x.ConfigName, x => x.ConfigValue),
-                NewConfig = _config
+                NewConfig = _config.ToDictionary(x => x.Key, x => x.Value)
             });
+        }
+        finally
+        {
+            _configLock.Release();
         }
     }
 
@@ -125,14 +141,14 @@ public class ConfigManager
     {
         var defaultValue = true;
         var configValue = StringUtil.EmptyToNull(GetConfigValue("api.ensure-importable-video"));
-        return (configValue != null ? bool.Parse(configValue) : defaultValue);
+        return configValue != null && bool.TryParse(configValue, out var result) ? result : defaultValue;
     }
 
     public bool ShowHiddenWebdavFiles()
     {
         var defaultValue = false;
         var configValue = StringUtil.EmptyToNull(GetConfigValue("webdav.show-hidden-files"));
-        return (configValue != null ? bool.Parse(configValue) : defaultValue);
+        return configValue != null && bool.TryParse(configValue, out var result) ? result : defaultValue;
     }
 
     public string? GetLibraryDir()
@@ -151,28 +167,28 @@ public class ConfigManager
     {
         var defaultValue = true;
         var configValue = StringUtil.EmptyToNull(GetConfigValue("webdav.enforce-readonly"));
-        return (configValue != null ? bool.Parse(configValue) : defaultValue);
+        return configValue != null && bool.TryParse(configValue, out var result) ? result : defaultValue;
     }
 
     public bool IsEnsureArticleExistenceEnabled()
     {
         var defaultValue = false;
         var configValue = StringUtil.EmptyToNull(GetConfigValue("api.ensure-article-existence"));
-        return (configValue != null ? bool.Parse(configValue) : defaultValue);
+        return configValue != null && bool.TryParse(configValue, out var result) ? result : defaultValue;
     }
 
     public bool IsPreviewPar2FilesEnabled()
     {
         var defaultValue = false;
         var configValue = StringUtil.EmptyToNull(GetConfigValue("webdav.preview-par2-files"));
-        return (configValue != null ? bool.Parse(configValue) : defaultValue);
+        return configValue != null && bool.TryParse(configValue, out var result) ? result : defaultValue;
     }
 
     public bool IsIgnoreSabHistoryLimitEnabled()
     {
         var defaultValue = true;
         var configValue = StringUtil.EmptyToNull(GetConfigValue("api.ignore-history-limit"));
-        return (configValue != null ? bool.Parse(configValue) : defaultValue);
+        return configValue != null && bool.TryParse(configValue, out var result) ? result : defaultValue;
     }
 
     public int GetMaxRepairConnections()
@@ -186,7 +202,7 @@ public class ConfigManager
     {
         var defaultValue = false;
         var configValue = StringUtil.EmptyToNull(GetConfigValue("repair.enable"));
-        var isRepairJobEnabled = (configValue != null ? bool.Parse(configValue) : defaultValue);
+        var isRepairJobEnabled = configValue != null && bool.TryParse(configValue, out var result) ? result : defaultValue;
         return isRepairJobEnabled
                && GetMaxRepairConnections() > 0
                && GetLibraryDir() != null
@@ -266,13 +282,16 @@ public class ConfigManager
                 "No Usenet server configuration found. Please configure either 'usenet.servers' or legacy 'usenet.host' settings.");
         }
 
+        var port = int.TryParse(GetConfigValue("usenet.port"), out var parsedPort) ? parsedPort : 119;
+        var useSsl = bool.TryParse(GetConfigValue("usenet.use-ssl"), out var parsedUseSsl) && parsedUseSsl;
+
         var legacyServer = new UsenetServerConfig
         {
             Id = "legacy-server",
             Name = "Primary Server",
             Host = host,
-            Port = int.Parse(GetConfigValue("usenet.port") ?? "119"),
-            UseSsl = bool.Parse(GetConfigValue("usenet.use-ssl") ?? "false"),
+            Port = port,
+            UseSsl = useSsl,
             Username = GetConfigValue("usenet.user") ?? string.Empty,
             Password = GetConfigValue("usenet.pass") ?? string.Empty,
             MaxConnections = GetMaxConnections(),

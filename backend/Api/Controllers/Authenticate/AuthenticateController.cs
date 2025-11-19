@@ -15,10 +15,15 @@ public class AuthenticateController(DavDatabaseClient dbClient) : BaseApiControl
             .Where(a => a.Type == request.Type && a.Username == request.Username)
             .FirstOrDefaultAsync();
 
+        // Always verify password to prevent timing attacks that could enumerate valid usernames
+        // Use dummy values if account doesn't exist to maintain consistent timing
+        var passwordHash = account?.PasswordHash ?? "AQAAAAIAAYagAAAAEDummyHashForTimingProtection1234567890abcdefghijklmnopqrstuvwxyz";
+        var salt = account?.RandomSalt ?? "";
+        var passwordValid = PasswordUtil.Verify(passwordHash, request.Password, salt);
+
         return new AuthenticateResponse()
         {
-            Authenticated = account != null
-                && PasswordUtil.Verify(account.PasswordHash, request.Password, account.RandomSalt)
+            Authenticated = account != null && passwordValid
         };
     }
 

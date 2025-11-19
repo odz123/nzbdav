@@ -11,9 +11,14 @@ public class AddUrlRequest() : AddFileRequest
         "Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 " +
         "(KHTML, like Gecko) Chrome/134.0.6998.166 Safari/537.36";
 
+    // Maximum NZB file size (10MB)
+    private const long MaxNzbFileSize = 10 * 1024 * 1024;
+
     // Reusable HttpClient to prevent socket exhaustion
     private static readonly HttpClient HttpClient = new()
     {
+        Timeout = TimeSpan.FromSeconds(30),
+        MaxResponseContentBufferSize = MaxNzbFileSize,
         DefaultRequestHeaders = { { "User-Agent", UserAgentHeader } }
     };
 
@@ -42,14 +47,42 @@ public class AddUrlRequest() : AddFileRequest
             if (string.IsNullOrWhiteSpace(url))
                 throw new Exception($"The url is invalid.");
 
-            // Validate URL to prevent SSRF attacks
-            if (!IsUrlSafe(url))
+            // Parse and validate the URI
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+                throw new Exception("Invalid URL format.");
+
+            // Only allow http and https schemes
+            if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+                throw new Exception("URL must use HTTP or HTTPS scheme.");
+
+            // Resolve and validate IP address to prevent SSRF attacks
+            var hostAddresses = Dns.GetHostAddresses(uri.Host);
+            IPAddress? safeIp = null;
+            foreach (var ipAddress in hostAddresses)
+            {
+                if (IsIpAddressSafe(ipAddress))
+                {
+                    safeIp = ipAddress;
+                    break;
+                }
+            }
+
+            if (safeIp == null)
                 throw new Exception("URL is not allowed. Cannot access internal/private resources.");
 
+            // Build request using resolved IP to prevent DNS rebinding attacks
+            var builder = new UriBuilder(uri) { Host = safeIp.ToString() };
+            var request = new HttpRequestMessage(HttpMethod.Get, builder.Uri);
+            request.Headers.Host = uri.Host; // Preserve original host header for virtual hosting
+
             // fetch url using reusable HttpClient
-            var response = await HttpClient.GetAsync(url);
+            var response = await HttpClient.SendAsync(request);
             if (!response.IsSuccessStatusCode)
                 throw new Exception($"Received status code {response.StatusCode}.");
+
+            // Check content length to prevent memory exhaustion
+            if (response.Content.Headers.ContentLength > MaxNzbFileSize)
+                throw new Exception($"NZB file too large. Maximum size is {MaxNzbFileSize / (1024 * 1024)}MB.");
 
             // read the content type
             var contentType = response.Content.Headers.ContentType?.MediaType;
@@ -64,8 +97,14 @@ public class AddUrlRequest() : AddFileRequest
                     throw new Exception("Filename could not be determined from Content-Disposition header.");
             }
 
-            // read the file contents
-            var fileContents = await response.Content.ReadAsStringAsync();
+            // read the file contents with size limit enforcement
+            using var stream = await response.Content.ReadAsStreamAsync();
+            using var reader = new StreamReader(stream);
+            var fileContents = await reader.ReadToEndAsync();
+
+            if (fileContents.Length > MaxNzbFileSize)
+                throw new Exception($"NZB file too large. Maximum size is {MaxNzbFileSize / (1024 * 1024)}MB.");
+
             if (string.IsNullOrWhiteSpace(fileContents))
                 throw new Exception("NZB file contents are empty.");
 
@@ -84,79 +123,57 @@ public class AddUrlRequest() : AddFileRequest
     }
 
     /// <summary>
-    /// Validates URL to prevent SSRF attacks by blocking access to private IP ranges and localhost.
+    /// Validates IP address to prevent SSRF attacks by blocking access to private IP ranges and localhost.
     /// </summary>
-    private static bool IsUrlSafe(string url)
+    private static bool IsIpAddressSafe(IPAddress ipAddress)
     {
-        try
+        // Block all private IP ranges
+        var bytes = ipAddress.GetAddressBytes();
+
+        if (ipAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
         {
-            // Parse and validate the URI
-            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            // IPv4 checks
+            // 127.0.0.0/8 - Loopback
+            if (bytes[0] == 127)
                 return false;
 
-            // Only allow http and https schemes
-            if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            // 10.0.0.0/8 - Private network
+            if (bytes[0] == 10)
                 return false;
 
-            // Get the host IP address
-            var hostAddresses = Dns.GetHostAddresses(uri.Host);
+            // 172.16.0.0/12 - Private network
+            if (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31)
+                return false;
 
-            foreach (var ipAddress in hostAddresses)
-            {
-                // Block all private IP ranges
-                var bytes = ipAddress.GetAddressBytes();
+            // 192.168.0.0/16 - Private network
+            if (bytes[0] == 192 && bytes[1] == 168)
+                return false;
 
-                if (ipAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
-                {
-                    // IPv4 checks
-                    // 127.0.0.0/8 - Loopback
-                    if (bytes[0] == 127)
-                        return false;
+            // 169.254.0.0/16 - Link-local (AWS metadata service)
+            if (bytes[0] == 169 && bytes[1] == 254)
+                return false;
 
-                    // 10.0.0.0/8 - Private network
-                    if (bytes[0] == 10)
-                        return false;
-
-                    // 172.16.0.0/12 - Private network
-                    if (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31)
-                        return false;
-
-                    // 192.168.0.0/16 - Private network
-                    if (bytes[0] == 192 && bytes[1] == 168)
-                        return false;
-
-                    // 169.254.0.0/16 - Link-local (AWS metadata service)
-                    if (bytes[0] == 169 && bytes[1] == 254)
-                        return false;
-
-                    // 0.0.0.0/8 - Current network
-                    if (bytes[0] == 0)
-                        return false;
-                }
-                else if (ipAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
-                {
-                    // IPv6 checks
-                    // Block loopback (::1)
-                    if (IPAddress.IsLoopback(ipAddress))
-                        return false;
-
-                    // Block link-local (fe80::/10)
-                    if (bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80)
-                        return false;
-
-                    // Block unique local addresses (fc00::/7)
-                    if ((bytes[0] & 0xfe) == 0xfc)
-                        return false;
-                }
-            }
-
-            return true;
+            // 0.0.0.0/8 - Current network
+            if (bytes[0] == 0)
+                return false;
         }
-        catch
+        else if (ipAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
         {
-            // If DNS resolution or any other error occurs, block the request
-            return false;
+            // IPv6 checks
+            // Block loopback (::1)
+            if (IPAddress.IsLoopback(ipAddress))
+                return false;
+
+            // Block link-local (fe80::/10)
+            if (bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80)
+                return false;
+
+            // Block unique local addresses (fc00::/7)
+            if ((bytes[0] & 0xfe) == 0xfc)
+                return false;
         }
+
+        return true;
     }
 
     private static string? AddNzbExtension(string? nzbName)

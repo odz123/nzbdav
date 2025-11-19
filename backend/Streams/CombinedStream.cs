@@ -7,7 +7,7 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams) : Stream
     private readonly IEnumerator<Task<Stream>> _streams = streams.GetEnumerator();
     private Stream? _currentStream;
     private long _position;
-    private bool _isDisposed;
+    private int _isDisposed = 0;
 
     public override bool CanRead => true;
     public override bool CanSeek => false;
@@ -76,7 +76,8 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams) : Stream
                 if (read == 0) break;
             }
 
-            _position += count;
+            // Note: Position already updated in ReadAsync, so no need to update here
+            // ReadAsync increments _position by the bytes actually read
         }
         finally
         {
@@ -106,19 +107,20 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams) : Stream
 
     protected override void Dispose(bool disposing)
     {
-        if (_isDisposed) return;
-        if (!disposing) return;
-        _streams.Dispose();
-        _currentStream?.Dispose();
-        _isDisposed = true;
+        if (Interlocked.CompareExchange(ref _isDisposed, 1, 0) == 1) return;
+        if (disposing)
+        {
+            _streams.Dispose();
+            _currentStream?.Dispose();
+        }
+        base.Dispose(disposing);
     }
 
     public override async ValueTask DisposeAsync()
     {
-        if (_isDisposed) return;
+        if (Interlocked.CompareExchange(ref _isDisposed, 1, 0) == 1) return;
         if (_currentStream != null) await _currentStream.DisposeAsync();
         _streams.Dispose();
-        _isDisposed = true;
         GC.SuppressFinalize(this);
     }
 }

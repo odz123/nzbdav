@@ -158,12 +158,25 @@ public class MultiServerNntpClient : INntpClient
         bool isArticleNotFoundRetryable)
     {
         var exceptions = new List<Exception>();
-        var availableServers = _servers.Where(s => _healthTracker.IsServerAvailable(s.Config.Id)).ToList();
+
+        // Take snapshot of servers to avoid race condition with UpdateServersAsync
+        List<ServerInstance> serversSnapshot;
+        await _updateLock.WaitAsync(cancellationToken);
+        try
+        {
+            serversSnapshot = _servers.ToList();
+        }
+        finally
+        {
+            _updateLock.Release();
+        }
+
+        var availableServers = serversSnapshot.Where(s => _healthTracker.IsServerAvailable(s.Config.Id)).ToList();
 
         if (availableServers.Count == 0)
         {
             _logger?.LogWarning("All servers are unavailable due to circuit breaker. Attempting all servers anyway.");
-            availableServers = _servers.ToList();
+            availableServers = serversSnapshot.ToList();
         }
 
         foreach (var server in availableServers)
@@ -279,7 +292,14 @@ public class MultiServerNntpClient : INntpClient
             // Dispose old connection pools
             foreach (var oldServer in oldServers)
             {
-                oldServer.Client.Dispose();
+                try
+                {
+                    oldServer.Client.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogError(ex, "Failed to dispose server {Name}", oldServer.Config.Name);
+                }
             }
 
             _logger?.LogInformation("Updated server configurations. Now have {Count} servers", _servers.Count);
