@@ -37,7 +37,8 @@ public class ConfigManager
     public T? GetConfigValue<T>(string configName)
     {
         var rawValue = StringUtil.EmptyToNull(GetConfigValue(configName));
-        return rawValue == null ? default : JsonSerializer.Deserialize<T>(rawValue);
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        return rawValue == null ? default : JsonSerializer.Deserialize<T>(rawValue, options);
     }
 
     public void UpdateValues(List<ConfigItem> configItems)
@@ -241,10 +242,14 @@ public class ConfigManager
         {
             try
             {
-                var servers = JsonSerializer.Deserialize<List<UsenetServerConfig>>(serversJson);
+                var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                var servers = JsonSerializer.Deserialize<List<UsenetServerConfig>>(serversJson, options);
                 if (servers != null && servers.Count > 0)
                 {
-                    return servers.Where(s => s.Enabled).ToList();
+                    // Filter out servers with invalid configuration (empty host, etc.)
+                    return servers
+                        .Where(s => s.Enabled && !string.IsNullOrWhiteSpace(s.Host))
+                        .ToList();
                 }
             }
             catch (JsonException)

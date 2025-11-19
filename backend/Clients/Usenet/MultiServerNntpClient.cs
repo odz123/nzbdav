@@ -39,7 +39,10 @@ public class MultiServerNntpClient : INntpClient
             .ToList();
 
         if (configs.Count == 0)
-            throw new InvalidOperationException("At least one enabled Usenet server must be configured");
+        {
+            _logger?.LogWarning("No enabled Usenet servers are configured. Usenet functionality will be unavailable until servers are configured.");
+            return;
+        }
 
         foreach (var config in configs)
         {
@@ -53,6 +56,11 @@ public class MultiServerNntpClient : INntpClient
 
     private ServerInstance CreateServerInstance(UsenetServerConfig config)
     {
+        // Validate required fields
+        if (string.IsNullOrWhiteSpace(config.Host))
+            throw new InvalidOperationException(
+                $"Server '{config.Name}' (ID: {config.Id}) has an empty hostname. Please configure a valid hostname.");
+        
         var createConnection = (CancellationToken ct) =>
             UsenetStreamingClient.CreateNewConnection(
                 config.Host, config.Port, config.UseSsl,
@@ -126,6 +134,9 @@ public class MultiServerNntpClient : INntpClient
 
     public Task<NntpDateResponse> DateAsync(CancellationToken cancellationToken)
     {
+        if (_servers.Count == 0)
+            throw new InvalidOperationException("No Usenet servers are configured");
+
         // Use primary server for date queries
         return _servers.First().Client.DateAsync(cancellationToken);
     }

@@ -1,0 +1,39 @@
+services:
+  nzbdav:
+    image: docker.io/library/nzbdav:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    ports:
+      - "3001:3000"
+    volumes:
+      - /Volumes/PRO-G40/nzbdav-main:/config
+    restart: unless-stopped
+
+  # ubuntu:
+  #   image: ubuntu
+  #   command: sleep infinity
+  #   volumes:
+  #     - nzbdav:/mnt/nzbdav
+  #   environment:
+  #     - PUID=1000
+  #     - PGID=1000
+  #
+  # radarr:
+  #   volumes:
+  #     - nzbdav:/mnt/nzbdav # Change target path based on SABnzbd rclone mount directory setting.
+
+# the rest of your config ...
+
+volumes:
+  nzbdav:
+    driver: rclone
+    driver_opts:
+      remote: "nzb-dav:"
+      allow_other: "true"
+      vfs_cache_mode: "off"
+      dir_cache_time: "1s"
+      allow_non_empty: "true"
+      uid: "1000"
+      gid: "1000"
+

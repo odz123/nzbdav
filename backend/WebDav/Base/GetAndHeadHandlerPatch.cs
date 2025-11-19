@@ -114,8 +114,8 @@ public class GetAndHeadHandlerPatch : IRequestHandler
                             // Validate stream has content
                             if (length == 0)
                             {
-                                response.SetStatus(DavStatusCode.RequestedRangeNotSatisfiable);
-                                return;
+                                response.SetStatus((DavStatusCode)416);
+                                return true;
                             }
 
                             var start = range.Start ?? 0;
