@@ -3,9 +3,11 @@ import styles from "./route.module.css"
 import { backendClient } from "~/clients/backend-client.server";
 import { HealthTable } from "./components/health-table/health-table";
 import { HealthStats } from "./components/health-stats/health-stats";
+import { ServerHealth } from "./components/server-health/server-health";
 import { useCallback, useEffect, useState } from "react";
 import { receiveMessage } from "~/utils/websocket-util";
 import { Alert } from "react-bootstrap";
+import type { ServerHealthInfo } from "~/clients/backend-client.server";
 
 const topicNames = {
     healthItemStatus: 'hs',
@@ -18,10 +20,11 @@ const topicSubscriptions = {
 
 export async function loader() {
     const enabledKey = 'repair.enable';
-    const [queueData, historyData, config] = await Promise.all([
+    const [queueData, historyData, config, serverHealthData] = await Promise.all([
         backendClient.getHealthCheckQueue(30),
         backendClient.getHealthCheckHistory(),
-        backendClient.getConfig([enabledKey])
+        backendClient.getConfig([enabledKey]),
+        backendClient.getServerHealth().catch(() => ({ status: false, servers: [] }))
     ]);
 
     return {
@@ -29,6 +32,7 @@ export async function loader() {
         queueItems: queueData.items,
         historyStats: historyData.stats,
         historyItems: historyData.items,
+        serverHealth: serverHealthData.servers,
         isEnabled: config
             .filter(x => x.configName === enabledKey)
             .filter(x => x.configValue.toLowerCase() === "true")
@@ -41,6 +45,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
     const [historyStats, setHistoryStats] = useState(loaderData.historyStats);
     const [queueItems, setQueueItems] = useState(loaderData.queueItems);
     const [uncheckedCount, setUncheckedCount] = useState(loaderData.uncheckedCount);
+    const [serverHealth, setServerHealth] = useState<ServerHealthInfo[]>(loaderData.serverHealth);
 
     // effects
     useEffect(() => {
@@ -54,7 +59,25 @@ export default function Health({ loaderData }: Route.ComponentProps) {
             }
         };
         refetchData();
-    }, [queueItems, setQueueItems])
+    }, [queueItems, setQueueItems]);
+
+    // Poll server health every 10 seconds
+    useEffect(() => {
+        const refetchServerHealth = async () => {
+            try {
+                const response = await fetch('/api/get-server-health');
+                if (response.ok) {
+                    const data = await response.json();
+                    setServerHealth(data.servers);
+                }
+            } catch (error) {
+                console.error('Failed to fetch server health:', error);
+            }
+        };
+
+        const interval = setInterval(refetchServerHealth, 10000);
+        return () => clearInterval(interval);
+    }, []);
 
     // events
     const onHealthItemStatus = useCallback(async (message: string) => {
@@ -135,6 +158,9 @@ export default function Health({ loaderData }: Route.ComponentProps) {
 
     return (
         <div className={styles.container}>
+            <div className={styles.section}>
+                <ServerHealth servers={serverHealth} />
+            </div>
             <div className={styles.section}>
                 <HealthStats stats={historyStats} />
             </div>

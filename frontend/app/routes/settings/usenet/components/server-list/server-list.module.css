@@ -1,0 +1,36 @@
+.table {
+    margin-bottom: 0;
+    font-size: 0.9rem;
+}
+
+.table th {
+    background-color: var(--bs-dark);
+    border-color: var(--bs-border-color);
+    font-weight: 600;
+}
+
+.table td {
+    vertical-align: middle;
+}
+
+.disabledRow {
+    opacity: 0.6;
+    background-color: var(--bs-secondary-bg) !important;
+}
+
+.actions {
+    display: flex;
+    gap: 0.25rem;
+    justify-content: center;
+}
+
+.emptyState {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--bs-secondary);
+}
+
+.emptyState p:first-child {
+    font-size: 1.1rem;
+    margin-bottom: 0.5rem;
+}

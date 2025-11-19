@@ -1,0 +1,57 @@
+.card {
+    margin-bottom: 1rem;
+}
+
+.header {
+    background-color: var(--bs-dark);
+    border-bottom: 1px solid var(--bs-border-color);
+}
+
+.body {
+    padding: 0;
+}
+
+.serverSection {
+    padding: 1rem;
+}
+
+.divider {
+    margin: 0;
+    opacity: 0.3;
+}
+
+.serverHeader {
+    margin-bottom: 1rem;
+}
+
+.serverTitle {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.serverName {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.serverInfo {
+    font-size: 0.9rem;
+    color: var(--bs-secondary);
+    font-family: monospace;
+}
+
+.statsTable {
+    margin-bottom: 0;
+}
+
+.statsTable td {
+    padding: 0.35rem 0.5rem;
+    border-color: var(--bs-border-color);
+}
+
+.label {
+    font-weight: 600;
+    width: 25%;
+}
