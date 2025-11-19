@@ -1,0 +1,31 @@
+services:
+  nzbdav:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - NZBDAV_VERSION=dev
+    image: nzbdav:latest
+    container_name: nzbdav
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+      # Backend URL (internal communication)
+      - BACKEND_URL=http://localhost:8080
+      # Max backend health check retries
+      - MAX_BACKEND_HEALTH_RETRIES=30
+      - MAX_BACKEND_HEALTH_RETRY_DELAY=1
+    volumes:
+      # Mount config directory for persistent data
+      - ./config:/config
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

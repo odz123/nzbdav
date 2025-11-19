@@ -1,0 +1,43 @@
+# Git
+.git
+.gitignore
+.gitattributes
+.github
+
+# Documentation
+*.md
+README.md
+IMPLEMENTATION_SUMMARY.md
+MULTI_SERVER_SETUP.md
+multi-server-config-example.json
+
+# Frontend
+frontend/node_modules
+frontend/.react-router
+frontend/build
+frontend/dist-node
+
+# Backend
+backend/bin
+backend/obj
+backend/publish
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config and data (should be mounted as volumes)
+config
+data
