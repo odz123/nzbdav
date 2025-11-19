@@ -2,7 +2,7 @@ import type { Route } from "./+types/route";
 import styles from "./route.module.css"
 import { Tabs, Tab, Button, Form } from "react-bootstrap"
 import { backendClient } from "~/clients/backend-client.server";
-import { isUsenetSettingsUpdated, UsenetSettings } from "./usenet/usenet";
+import { isUsenetSettingsUpdated, UsenetSettings } from "./usenet/usenet-multi";
 import React, { useEffect } from "react";
 import { isSabnzbdSettingsUpdated, isSabnzbdSettingsValid, SabnzbdSettings } from "./sabnzbd/sabnzbd";
 import { isWebdavSettingsUpdated, isWebdavSettingsValid, WebdavSettings } from "./webdav/webdav";
@@ -23,11 +23,12 @@ const defaultConfig = {
     "api.duplicate-nzb-behavior": "increment",
     "api.import-strategy": "symlinks",
     "api.completed-downloads-dir": "",
+    "usenet.servers": "",
     "usenet.host": "",
     "usenet.port": "",
     "usenet.use-ssl": "false",
     "usenet.connections": "",
-    "usenet.connections-per-stream": "",
+    "usenet.connections-per-stream": "5",
     "usenet.user": "",
     "usenet.pass": "",
     "webdav.user": "",
@@ -90,7 +91,6 @@ function Body(props: BodyProps) {
     const saveButtonLabel = isSaving ? "Saving..."
         : !isUpdated && isSaved ? "Saved ✅"
         : !isUpdated && !isSaved ? "There are no changes to save"
-        : iseUsenetUpdated && !isUsenetSettingsReadyToSave ? "Must test the usenet connection to save"
         : isSabnzbdUpdated && !isSabnzbdSettingsValid(newConfig) ? "Invalid SABnzbd settings"
         : isWebdavUpdated && !isWebdavSettingsValid(newConfig) ? "Invalid WebDAV settings"
         : isArrsUpdated && !isArrsSettingsValid(newConfig) ? "Invalid Arrs settings"

@@ -225,6 +225,22 @@ class BackendClient {
         const data = await response.json();
         return data;
     }
+
+    public async getServerHealth(): Promise<ServerHealthResponse> {
+        const url = process.env.BACKEND_URL + "/api/get-server-health";
+
+        const apiKey = process.env.FRONTEND_BACKEND_API_KEY || "";
+        const response = await fetch(url, {
+            method: "GET",
+            headers: { "x-api-key": apiKey }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to get server health: ${(await response.json()).error}`);
+        }
+        const data = await response.json();
+        return data;
+    }
 }
 
 export const backendClient = new BackendClient();
@@ -328,4 +344,40 @@ export enum RepairAction {
     Repaired = 1,
     Deleted = 2,
     ActionNeeded = 3,
+}
+
+export type ServerHealthResponse = {
+    status: boolean,
+    servers: ServerHealthInfo[]
+}
+
+export type ServerHealthInfo = {
+    id: string,
+    name: string,
+    host: string,
+    port: number,
+    priority: number,
+    maxConnections: number,
+    isAvailable: boolean,
+    consecutiveFailures: number,
+    totalSuccesses: number,
+    totalFailures: number,
+    lastSuccessTime: string | null,
+    lastFailureTime: string | null,
+    lastException: string | null
+}
+
+export type UsenetServerConfig = {
+    id: string,
+    name: string,
+    host: string,
+    port: number,
+    useSsl: boolean,
+    username: string,
+    password: string,
+    maxConnections: number,
+    priority: number,
+    enabled: boolean,
+    retentionDays: number,
+    groups: string
 }
