@@ -18,7 +18,7 @@ public class UsenetStreamingClient
     private readonly ServerHealthTracker _healthTracker;
     private readonly ConfigManager _configManager;
     private MultiServerNntpClient? _multiServerClient;
-    private readonly IMemoryCache _healthySegmentCache;
+    private IMemoryCache _healthySegmentCache;
 
     public UsenetStreamingClient(
         ConfigManager configManager,
@@ -54,11 +54,10 @@ public class UsenetStreamingClient
                 return;
 
             // clear healthy segment cache when usenet config changes
-            // MemoryCache doesn't have a Clear method, so we compact to remove expired items
-            if (_healthySegmentCache is MemoryCache memoryCache)
-            {
-                memoryCache.Compact(1.0);
-            }
+            // Dispose old cache and create new one to ensure ALL entries are cleared
+            var oldCache = _healthySegmentCache;
+            _healthySegmentCache = new MemoryCache(new MemoryCacheOptions() { SizeLimit = 50000 });
+            oldCache.Dispose();
 
             // update server configurations
             var newServerConfigs = configManager.GetUsenetServers();
