@@ -136,9 +136,11 @@ public class HealthCheckService
                 debounce(() => _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, message));
             };
 
-            // perform health check
+            // perform health check with sampling
+            var samplingRate = GetSamplingRateForFile(davItem);
+            var minSegments = _configManager.GetMinHealthCheckSegments();
             var progress = progressHook.ToPercentage(segments.Count);
-            await _usenetClient.CheckAllSegmentsAsync(segments, concurrency, progress, ct);
+            await _usenetClient.CheckAllSegmentsAsync(segments, concurrency, samplingRate, minSegments, progress, ct);
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|100");
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
 
@@ -357,5 +359,26 @@ public class HealthCheckService
                 if (_missingSegmentIds.Contains(segmentId))
                     throw new UsenetArticleNotFoundException(segmentId);
         }
+    }
+
+    private double GetSamplingRateForFile(DavItem davItem)
+    {
+        var baseSamplingRate = _configManager.GetHealthCheckSamplingRate();
+
+        // If adaptive sampling is disabled, use base rate
+        if (!_configManager.IsAdaptiveSamplingEnabled())
+            return baseSamplingRate;
+
+        // Calculate file age
+        var age = DateTimeOffset.UtcNow - (davItem.ReleaseDate ?? DateTimeOffset.UtcNow);
+
+        // Adjust sampling rate based on age (newer files = higher sampling rate)
+        return age.TotalDays switch
+        {
+            < 30 => Math.Min(1.0, baseSamplingRate * 2.0),   // New files: double the rate (max 100%)
+            < 180 => baseSamplingRate,                        // Medium age: use configured rate
+            < 365 => Math.Max(0.05, baseSamplingRate * 0.67), // Older files: reduce to 67%
+            _ => Math.Max(0.05, baseSamplingRate * 0.33)      // Very old: reduce to 33% (min 5%)
+        };
     }
 }

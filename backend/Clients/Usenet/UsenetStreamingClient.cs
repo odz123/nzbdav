@@ -72,10 +72,23 @@ public class UsenetStreamingClient
         // This provides an aggregate view across all servers
     }
 
+    public Task CheckAllSegmentsAsync
+    (
+        IEnumerable<string> segmentIds,
+        int concurrency,
+        IProgress<int>? progress = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        return CheckAllSegmentsAsync(segmentIds, concurrency, 1.0, 10, progress, cancellationToken);
+    }
+
     public async Task CheckAllSegmentsAsync
     (
         IEnumerable<string> segmentIds,
         int concurrency,
+        double samplingRate,
+        int minSegments,
         IProgress<int>? progress = null,
         CancellationToken cancellationToken = default
     )
@@ -84,18 +97,90 @@ public class UsenetStreamingClient
         using var _ = childCt.Token.SetScopedContext(cancellationToken.GetContext<object>());
         var token = childCt.Token;
 
-        var tasks = segmentIds
+        var segmentList = segmentIds.ToList();
+
+        // Apply sampling if rate < 1.0
+        var segmentsToCheck = samplingRate >= 1.0
+            ? segmentList
+            : GetStrategicSample(segmentList, samplingRate, minSegments);
+
+        var tasks = segmentsToCheck
             .Select(async x => await CheckSegmentWithRetryAsync(x, token))
             .WithConcurrencyAsync(concurrency);
 
         var processed = 0;
+        var consecutiveFailures = 0;
+        var totalChecked = segmentsToCheck.Count;
+
         await foreach (var task in tasks)
         {
-            progress?.Report(++processed);
-            if (task.IsSuccess) continue;
-            await childCt.CancelAsync();
-            throw new UsenetArticleNotFoundException(task.SegmentId);
+            progress?.Report(++processed * 100 / totalChecked);
+
+            if (!task.IsSuccess)
+            {
+                consecutiveFailures++;
+
+                // Early termination: if we find 3+ consecutive missing segments, file is unhealthy
+                if (consecutiveFailures >= 3)
+                {
+                    await childCt.CancelAsync();
+                    throw new UsenetArticleNotFoundException(task.SegmentId);
+                }
+            }
+            else
+            {
+                consecutiveFailures = 0;
+            }
+
+            // If any single segment fails (and we haven't hit consecutive threshold), still fail
+            if (!task.IsSuccess && consecutiveFailures < 3)
+            {
+                await childCt.CancelAsync();
+                throw new UsenetArticleNotFoundException(task.SegmentId);
+            }
         }
+    }
+
+    private static List<string> GetStrategicSample(List<string> segments, double samplingRate, int minSegments)
+    {
+        var segmentCount = segments.Count;
+        var sampleSize = Math.Max(minSegments, (int)(segmentCount * samplingRate));
+
+        // If sample size >= total segments, return all segments
+        if (sampleSize >= segmentCount)
+            return segments;
+
+        var sample = new HashSet<string>();
+
+        // Always check first 3 and last 3 segments (most likely to be missing)
+        var edgeCount = Math.Min(3, segmentCount / 2);
+        foreach (var segment in segments.Take(edgeCount))
+            sample.Add(segment);
+        foreach (var segment in segments.TakeLast(edgeCount))
+            sample.Add(segment);
+
+        // Fill remaining quota with random samples from middle
+        var remaining = sampleSize - sample.Count;
+        if (remaining > 0)
+        {
+            var startIdx = edgeCount;
+            var endIdx = segmentCount - edgeCount;
+            var middleSegments = segments.Skip(startIdx).Take(endIdx - startIdx).ToList();
+
+            if (middleSegments.Count > 0)
+            {
+                var random = new Random();
+                var randomSample = middleSegments
+                    .OrderBy(_ => random.Next())
+                    .Take(remaining);
+
+                foreach (var segment in randomSample)
+                    sample.Add(segment);
+            }
+        }
+
+        // Return in original order to maintain sequential checking benefits
+        return segments.Where(s => sample.Contains(s)).ToList();
     }
 
     private async Task<(string SegmentId, bool IsSuccess)> CheckSegmentWithRetryAsync(

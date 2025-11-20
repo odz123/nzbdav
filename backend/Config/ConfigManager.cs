@@ -209,6 +209,27 @@ public class ConfigManager
                && GetArrConfig().GetInstanceCount() > 0;
     }
 
+    public double GetHealthCheckSamplingRate()
+    {
+        var value = StringUtil.EmptyToNull(GetConfigValue("repair.sampling-rate")) ?? "0.15";
+        if (!double.TryParse(value, out var result))
+            return 0.15;
+        return Math.Clamp(result, 0.05, 1.0);
+    }
+
+    public int GetMinHealthCheckSegments()
+    {
+        var value = StringUtil.EmptyToNull(GetConfigValue("repair.min-segments")) ?? "10";
+        return int.TryParse(value, out var result) ? result : 10;
+    }
+
+    public bool IsAdaptiveSamplingEnabled()
+    {
+        var defaultValue = true;
+        var configValue = StringUtil.EmptyToNull(GetConfigValue("repair.adaptive-sampling"));
+        return configValue != null && bool.TryParse(configValue, out var result) ? result : defaultValue;
+    }
+
     public ArrConfig GetArrConfig()
     {
         var defaultValue = new ArrConfig();
