@@ -11,7 +11,7 @@ public class ProbingStream(Stream stream) : Stream
 {
     private bool? _isEmpty;
     private byte? _probeByte;
-    private bool _disposed;
+    private int _disposed = 0;
 
     public async Task<bool> IsEmptyAsync()
     {
@@ -117,16 +117,18 @@ public class ProbingStream(Stream stream) : Stream
 
     protected override void Dispose(bool disposing)
     {
-        if (_disposed) return;
-        stream.Dispose();
-        _disposed = true;
+        if (Interlocked.CompareExchange(ref _disposed, 1, 0) == 1) return;
+        if (disposing)
+        {
+            stream.Dispose();
+        }
+        base.Dispose(disposing);
     }
 
     public override async ValueTask DisposeAsync()
     {
-        if (_disposed) return;
+        if (Interlocked.CompareExchange(ref _disposed, 1, 0) == 1) return;
         await stream.DisposeAsync();
-        _disposed = true;
         GC.SuppressFinalize(this);
     }
 }

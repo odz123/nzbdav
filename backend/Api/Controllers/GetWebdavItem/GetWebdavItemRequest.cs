@@ -31,8 +31,18 @@ public class GetWebdavItemRequest
         var rangeHeader = context.Request.Headers["Range"].FirstOrDefault() ?? "";
         if (!rangeHeader.StartsWith("bytes=")) return;
         var parts = rangeHeader[6..].Split("-", StringSplitOptions.RemoveEmptyEntries);
-        RangeStart = long.Parse(parts[0]);
-        if (parts.Length > 1) RangeEnd = long.Parse(parts[1]);
+        if (parts.Length == 0) return;
+
+        if (!long.TryParse(parts[0], out var start))
+            throw new BadHttpRequestException("Invalid Range header format");
+        RangeStart = start;
+
+        if (parts.Length > 1)
+        {
+            if (!long.TryParse(parts[1], out var end))
+                throw new BadHttpRequestException("Invalid Range header format");
+            RangeEnd = end;
+        }
     }
 
     private static bool VerifyDownloadKey(string? downloadKey, string path, ConfigManager configManager)

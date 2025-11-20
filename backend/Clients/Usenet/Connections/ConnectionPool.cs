@@ -277,7 +277,16 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
     public void Dispose()
     {
-        _ = DisposeAsync().AsTask(); // fire-and-forget synchronous path
+        // Properly wait for async disposal to complete
+        // This ensures all connections are disposed before returning
+        try
+        {
+            DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+        catch
+        {
+            // Suppress exceptions during disposal
+        }
     }
 
     public sealed class ConnectionPoolChangedEventArgs(int live, int idle, int max) : EventArgs

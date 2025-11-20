@@ -11,7 +11,7 @@ public class DisposableCallbackStream : Stream
     private readonly Stream _inner;
     private readonly Action? _onDispose;
     private readonly Func<ValueTask>? _onDisposeAsync;
-    private bool _disposed;
+    private int _disposed = 0;
 
     // ReSharper disable once ConvertToPrimaryConstructor
     public DisposableCallbackStream(Stream inner, Action? onDispose = null, Func<ValueTask>? onDisposeAsync = null)
@@ -23,7 +23,7 @@ public class DisposableCallbackStream : Stream
 
     protected override void Dispose(bool disposing)
     {
-        if (_disposed) return;
+        if (Interlocked.CompareExchange(ref _disposed, 1, 0) == 1) return;
 
         if (disposing)
         {
@@ -31,13 +31,12 @@ public class DisposableCallbackStream : Stream
             _onDispose?.Invoke();
         }
 
-        _disposed = true;
         base.Dispose(disposing);
     }
 
     public override async ValueTask DisposeAsync()
     {
-        if (_disposed) return;
+        if (Interlocked.CompareExchange(ref _disposed, 1, 0) == 1) return;
 
         await _inner.DisposeAsync();
 
@@ -46,7 +45,6 @@ public class DisposableCallbackStream : Stream
         else
             _onDispose?.Invoke();
 
-        _disposed = true;
         await base.DisposeAsync();
     }
 

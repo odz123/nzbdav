@@ -4,7 +4,7 @@ namespace NzbWebDAV.Streams;
 
 public class LimitedLengthStream(Stream stream, long length) : Stream
 {
-    private bool _disposed;
+    private int _disposed = 0;
     private long _position = 0;
 
     public override void Flush() => stream.Flush();
@@ -53,16 +53,18 @@ public class LimitedLengthStream(Stream stream, long length) : Stream
 
     protected override void Dispose(bool disposing)
     {
-        if (_disposed) return;
-        stream.Dispose();
-        _disposed = true;
+        if (Interlocked.CompareExchange(ref _disposed, 1, 0) == 1) return;
+        if (disposing)
+        {
+            stream.Dispose();
+        }
+        base.Dispose(disposing);
     }
 
     public override async ValueTask DisposeAsync()
     {
-        if (_disposed) return;
+        if (Interlocked.CompareExchange(ref _disposed, 1, 0) == 1) return;
         await stream.DisposeAsync();
-        _disposed = true;
         GC.SuppressFinalize(this);
     }
 }

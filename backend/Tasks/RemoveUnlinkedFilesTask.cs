@@ -17,6 +17,7 @@ public class RemoveUnlinkedFilesTask(
 ) : BaseTask
 {
     private static List<string> _allRemovedPaths = [];
+    private static readonly object _allRemovedPathsLock = new();
 
     protected override async Task ExecuteInternal()
     {
@@ -80,14 +81,19 @@ public class RemoveUnlinkedFilesTask(
         if (!isDryRun) await dbClient.Ctx.SaveChangesAsync();
 
         // return all removed paths
-        _allRemovedPaths = allDavItems
+        var removedPaths = allDavItems
             .Where(x => removedItems.Contains(x.Id))
             .Select(x => x.Path)
             .ToList();
 
+        lock (_allRemovedPathsLock)
+        {
+            _allRemovedPaths = removedPaths;
+        }
+
         Report(!isDryRun
-            ? $"Done. Removed {_allRemovedPaths.Count} orphaned items."
-            : $"Done. The task would remove {_allRemovedPaths.Count} orphaned items.");
+            ? $"Done. Removed {removedPaths.Count} orphaned items."
+            : $"Done. The task would remove {removedPaths.Count} orphaned items.");
     }
 
     private void RemoveItem(DavItem item, HashSet<Guid> removedItems)
@@ -121,8 +127,11 @@ public class RemoveUnlinkedFilesTask(
 
     public static string GetAuditReport()
     {
-        return _allRemovedPaths.Count > 0
-            ? string.Join("\n", _allRemovedPaths)
-            : "This list is Empty.\nYou must first run the task.";
+        lock (_allRemovedPathsLock)
+        {
+            return _allRemovedPaths.Count > 0
+                ? string.Join("\n", _allRemovedPaths)
+                : "This list is Empty.\nYou must first run the task.";
+        }
     }
 }

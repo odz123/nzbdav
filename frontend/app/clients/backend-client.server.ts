@@ -10,11 +10,11 @@ class BackendClient {
             }
         });
 
+        const data = await response.json();
         if (!response.ok) {
-            throw new Error(`Failed to fetch onboarding status: ${(await response.json()).error}`);
+            throw new Error(`Failed to fetch onboarding status: ${data.error || response.statusText}`);
         }
 
-        const data = await response.json();
         return data.isOnboarding;
     }
 
@@ -35,11 +35,11 @@ class BackendClient {
             })()
         });
 
+        const data = await response.json();
         if (!response.ok) {
-            throw new Error(`Failed to create account: ${(await response.json()).error}`);
+            throw new Error(`Failed to create account: ${data.error || response.statusText}`);
         }
 
-        const data = await response.json();
         return data.status;
     }
 
@@ -59,11 +59,11 @@ class BackendClient {
             })()
         });
 
+        const data = await response.json();
         if (!response.ok) {
-            throw new Error(`Failed to authenticate: ${(await response.json()).error}`);
+            throw new Error(`Failed to authenticate: ${data.error || response.statusText}`);
         }
 
-        const data = await response.json();
         return data.authenticated;
     }
 
@@ -72,11 +72,12 @@ class BackendClient {
 
         const apiKey = process.env.FRONTEND_BACKEND_API_KEY || "";
         const response = await fetch(url, { headers: { "x-api-key": apiKey } });
-        if (!response.ok) {
-            throw new Error(`Failed to get queue: ${(await response.json()).error}`);
-        }
 
         const data = await response.json();
+        if (!response.ok) {
+            throw new Error(`Failed to get queue: ${data.error || response.statusText}`);
+        }
+
         return data.queue;
     }
 
@@ -85,11 +86,12 @@ class BackendClient {
 
         const apiKey = process.env.FRONTEND_BACKEND_API_KEY || "";
         const response = await fetch(url, { headers: { "x-api-key": apiKey } });
-        if (!response.ok) {
-            throw new Error(`Failed to get history: ${(await response.json()).error}`);
-        }
 
         const data = await response.json();
+        if (!response.ok) {
+            throw new Error(`Failed to get history: ${data.error || response.statusText}`);
+        }
+
         return data.history;
     }
 
@@ -109,10 +111,11 @@ class BackendClient {
             })()
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to add nzb file: ${(await response.json()).error}`);
-        }
         const data = await response.json();
+        if (!response.ok) {
+            throw new Error(`Failed to add nzb file: ${data.error || response.statusText}`);
+        }
+
         if (!data.nzo_ids || data.nzo_ids.length != 1) {
             throw new Error(`Failed to add nzb file: unexpected response format`);
         }
@@ -133,10 +136,11 @@ class BackendClient {
             })()
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to list webdav directory: ${(await response.json()).error}`);
-        }
         const data = await response.json();
+        if (!response.ok) {
+            throw new Error(`Failed to list webdav directory: ${data.error || response.statusText}`);
+        }
+
         return data.items;
     }
 
@@ -156,10 +160,11 @@ class BackendClient {
             })()
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to get config items: ${(await response.json()).error}`);
-        }
         const data = await response.json();
+        if (!response.ok) {
+            throw new Error(`Failed to get config items: ${data.error || response.statusText}`);
+        }
+
         return data.configItems || [];
     }
 
@@ -179,10 +184,11 @@ class BackendClient {
             })()
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to update config items: ${(await response.json()).error}`);
-        }
         const data = await response.json();
+        if (!response.ok) {
+            throw new Error(`Failed to update config items: ${data.error || response.statusText}`);
+        }
+
         return data.status;
     }
 
@@ -199,10 +205,11 @@ class BackendClient {
             headers: { "x-api-key": apiKey }
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to get health check queue: ${(await response.json()).error}`);
-        }
         const data = await response.json();
+        if (!response.ok) {
+            throw new Error(`Failed to get health check queue: ${data.error || response.statusText}`);
+        }
+
         return data;
     }
 
@@ -219,10 +226,11 @@ class BackendClient {
             headers: { "x-api-key": apiKey }
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to get health check history: ${(await response.json()).error}`);
-        }
         const data = await response.json();
+        if (!response.ok) {
+            throw new Error(`Failed to get health check history: ${data.error || response.statusText}`);
+        }
+
         return data;
     }
 
@@ -235,10 +243,11 @@ class BackendClient {
             headers: { "x-api-key": apiKey }
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to get server health: ${(await response.json()).error}`);
-        }
         const data = await response.json();
+        if (!response.ok) {
+            throw new Error(`Failed to get server health: ${data.error || response.statusText}`);
+        }
+
         return data;
     }
 }

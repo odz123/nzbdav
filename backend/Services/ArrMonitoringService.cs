@@ -56,7 +56,7 @@ public class ArrMonitoringService
         }
         catch (Exception e)
         {
-            Log.Error($"Error occured while monitoring queue for `{client.Host}`: {e.Message}");
+            Log.Error($"Error occurred while monitoring queue for `{client.Host}`: {e.Message}");
         }
     }
 

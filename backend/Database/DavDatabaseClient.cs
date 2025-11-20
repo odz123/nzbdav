@@ -8,10 +8,11 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     public DavDatabaseContext Ctx => ctx;
 
     // file
-    public Task<DavItem?> GetFileById(string id)
+    public async Task<DavItem?> GetFileById(string id)
     {
-        var guid = Guid.Parse(id);
-        return ctx.Items.Where(i => i.Id == guid).FirstOrDefaultAsync();
+        if (!Guid.TryParse(id, out var guid))
+            return null;
+        return await ctx.Items.Where(i => i.Id == guid).FirstOrDefaultAsync();
     }
 
     public Task<List<DavItem>> GetFilesByIdPrefix(string prefix)

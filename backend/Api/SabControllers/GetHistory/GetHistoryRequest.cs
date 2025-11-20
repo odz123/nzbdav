@@ -60,6 +60,7 @@ public class GetHistoryRequest
             NzoIds = nzoIdsParam
                 .Split(',')
                 .Select(nzoId => nzoId.Trim())
+                .Where(nzoId => Guid.TryParse(nzoId, out _))
                 .Select(Guid.Parse)
                 .ToList();
         }
