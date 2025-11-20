@@ -70,7 +70,7 @@ public class DatabaseStoreWatchFolder(
         };
         var response = await controller.AddFileAsync(addFileRequest);
 
-        if (response.NzoIds.Length == 0)
+        if (response.NzoIds.Count == 0)
             throw new InvalidOperationException("Failed to add file to queue: no queue item ID returned");
 
         var queueItem = dbClient.Ctx.ChangeTracker

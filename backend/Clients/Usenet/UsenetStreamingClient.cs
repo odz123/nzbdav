@@ -1,5 +1,4 @@
 ﻿using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.Primitives;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
@@ -20,7 +19,6 @@ public class UsenetStreamingClient
     private readonly ConfigManager _configManager;
     private MultiServerNntpClient? _multiServerClient;
     private readonly IMemoryCache _healthySegmentCache;
-    private CancellationTokenSource _cacheInvalidationTokenSource = new();
 
     public UsenetStreamingClient(
         ConfigManager configManager,
@@ -56,11 +54,11 @@ public class UsenetStreamingClient
                 return;
 
             // clear healthy segment cache when usenet config changes
-            // Cancel the old token to invalidate all cached entries, then create a new token
-            var oldTokenSource = _cacheInvalidationTokenSource;
-            _cacheInvalidationTokenSource = new CancellationTokenSource();
-            oldTokenSource.Cancel();
-            oldTokenSource.Dispose();
+            // MemoryCache doesn't have a Clear method, so we compact to remove expired items
+            if (_healthySegmentCache is MemoryCache memoryCache)
+            {
+                memoryCache.Compact(1.0);
+            }
 
             // update server configurations
             var newServerConfigs = configManager.GetUsenetServers();
@@ -253,6 +251,13 @@ public class UsenetStreamingClient
             {
                 var result = await _client.StatAsync(segmentId, cancellationToken);
 
+                // Only these response codes indicate the article is actually missing
+                if (result.ResponseType == NntpStatResponseType.NoArticleWithThatNumber ||
+                    result.ResponseType == NntpStatResponseType.NoArticleWithThatMessageId)
+                {
+                    return (segmentId, false);
+                }
+
                 // Article exists
                 if (result.ResponseType == NntpStatResponseType.ArticleExists)
                 {
@@ -281,11 +286,6 @@ public class UsenetStreamingClient
 
                 // After all retries, assume success to avoid false positives
                 return (segmentId, true);
-            }
-            catch (UsenetArticleNotFoundException)
-            {
-                // Article not found on any server (multi-server failover already tried)
-                return (segmentId, false);
             }
             catch (Exception) when (attempt < maxRetries)
             {
@@ -357,9 +357,7 @@ public class UsenetStreamingClient
         _healthySegmentCache.Set(segmentId, true, new MemoryCacheEntryOptions
         {
             AbsoluteExpirationRelativeToNow = cacheTtl,
-            Size = 1, // Each entry counts as 1 toward the size limit
-            // When config changes, all cached entries are invalidated via cancellation token
-            ExpirationTokens = { new CancellationChangeToken(_cacheInvalidationTokenSource.Token) }
+            Size = 1 // Each entry counts as 1 toward the size limit
         });
     }
 
