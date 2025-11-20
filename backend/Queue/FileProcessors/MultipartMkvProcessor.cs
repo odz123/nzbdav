@@ -28,6 +28,9 @@ public class MultipartMkvProcessor : BaseProcessor
     public override async Task<BaseProcessor.Result?> ProcessAsync()
     {
         var sortedFileInfos = _fileInfos.OrderBy(f => GetPartNumber(f.FileName)).ToList();
+        if (sortedFileInfos.Count == 0)
+            throw new InvalidOperationException("No file parts available for processing");
+
         var fileParts = new List<DavMultipartFile.FilePart>();
         foreach (var fileInfo in sortedFileInfos)
         {

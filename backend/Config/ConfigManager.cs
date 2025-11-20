@@ -11,6 +11,7 @@ public class ConfigManager
 {
     private readonly Dictionary<string, string> _config = new();
     private readonly SemaphoreSlim _configLock = new(1, 1);
+    private readonly object _syncLock = new(); // For synchronous access
     public event EventHandler<ConfigEventArgs>? OnConfigChanged;
 
     public async Task LoadConfig()
@@ -20,10 +21,14 @@ public class ConfigManager
         {
             await using var dbContext = new DavDatabaseContext();
             var configItems = await dbContext.ConfigItems.ToListAsync();
-            _config.Clear();
-            foreach (var configItem in configItems)
+
+            lock (_syncLock)
             {
-                _config[configItem.ConfigName] = configItem.ConfigValue;
+                _config.Clear();
+                foreach (var configItem in configItems)
+                {
+                    _config[configItem.ConfigName] = configItem.ConfigValue;
+                }
             }
         }
         finally
@@ -34,14 +39,9 @@ public class ConfigManager
 
     public string? GetConfigValue(string configName)
     {
-        _configLock.Wait();
-        try
+        lock (_syncLock)
         {
             return _config.TryGetValue(configName, out string? value) ? value : null;
-        }
-        finally
-        {
-            _configLock.Release();
         }
     }
 
