@@ -24,12 +24,44 @@ public class ThreadSafeNntpClient : INntpClient
 
     public Task<bool> ConnectAsync(string host, int port, bool useSsl, CancellationToken cancellationToken)
     {
-        return Synchronized(() => _client.ConnectAsync(host, port, useSsl), cancellationToken);
+        return Synchronized(async () =>
+        {
+            try
+            {
+                Serilog.Log.Debug("ThreadSafeNntpClient: Calling underlying _client.ConnectAsync for {Host}:{Port} (SSL={UseSsl})", host, port, useSsl);
+                var result = await _client.ConnectAsync(host, port, useSsl);
+                Serilog.Log.Debug("ThreadSafeNntpClient: _client.ConnectAsync returned {Result} for {Host}:{Port}", result, host, port);
+                return result;
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Error(ex,
+                    "ThreadSafeNntpClient: _client.ConnectAsync threw exception for {Host}:{Port}. Type: {Type}, Message: {Message}",
+                    host, port, ex.GetType().FullName, ex.Message);
+                throw;
+            }
+        }, cancellationToken);
     }
 
     public Task<bool> AuthenticateAsync(string user, string pass, CancellationToken cancellationToken)
     {
-        return Synchronized(() => _client.Authenticate(user, pass), cancellationToken);
+        return Synchronized(() =>
+        {
+            try
+            {
+                Serilog.Log.Debug("ThreadSafeNntpClient: Calling underlying _client.Authenticate for user {User}", user);
+                var result = _client.Authenticate(user, pass);
+                Serilog.Log.Debug("ThreadSafeNntpClient: _client.Authenticate returned {Result} for user {User}", result, user);
+                return result;
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Error(ex,
+                    "ThreadSafeNntpClient: _client.Authenticate threw exception for user {User}. Type: {Type}, Message: {Message}",
+                    user, ex.GetType().FullName, ex.Message);
+                throw;
+            }
+        }, cancellationToken);
     }
 
     public Task<NntpStatResponse> StatAsync(string segmentId, CancellationToken cancellationToken)

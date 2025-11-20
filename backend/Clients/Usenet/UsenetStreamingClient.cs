@@ -370,11 +370,91 @@ public class UsenetStreamingClient
         CancellationToken cancellationToken
     )
     {
+        Serilog.Log.Debug(
+            "Attempting to create new NNTP connection: Host={Host}, Port={Port}, UseSsl={UseSsl}, User={User}, PassLength={PassLength}",
+            host, port, useSsl, user, pass?.Length ?? 0);
+
         var connection = new ThreadSafeNntpClient();
-        if (!await connection.ConnectAsync(host, port, useSsl, cancellationToken))
+
+        bool connectResult;
+        try
+        {
+            Serilog.Log.Debug("Calling ConnectAsync for host {Host}:{Port}", host, port);
+            connectResult = await connection.ConnectAsync(host, port, useSsl, cancellationToken);
+            Serilog.Log.Debug("ConnectAsync returned {Result} for host {Host}:{Port}", connectResult, host, port);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "ConnectAsync threw exception for host {Host}:{Port}", host, port);
+            throw new CouldNotConnectToUsenetException($"Could not connect to usenet host. Exception: {ex.Message}");
+        }
+
+        if (!connectResult)
+        {
+            Serilog.Log.Warning("ConnectAsync returned false for host {Host}:{Port}", host, port);
             throw new CouldNotConnectToUsenetException("Could not connect to usenet host. Check connection settings.");
-        if (!await connection.AuthenticateAsync(user, pass, cancellationToken))
-            throw new CouldNotLoginToUsenetException("Could not login to usenet host. Check username and password.");
+        }
+
+        // Only authenticate if both username and password are provided
+        // Many NNTP servers don't require authentication
+        var hasUsername = !string.IsNullOrWhiteSpace(user);
+        var hasPassword = !string.IsNullOrWhiteSpace(pass);
+
+        if (hasUsername || hasPassword)
+        {
+            // If only one credential is provided, that's likely a configuration error
+            if (!hasUsername || !hasPassword)
+            {
+                Serilog.Log.Error(
+                    "Incomplete credentials for host {Host}: HasUsername={HasUsername}, HasPassword={HasPassword}",
+                    host, hasUsername, hasPassword);
+                throw new CouldNotLoginToUsenetException(
+                    "Incomplete credentials. Both username and password must be provided, or neither (for servers that don't require authentication).");
+            }
+
+            bool authResult;
+            try
+            {
+                Serilog.Log.Debug("Calling AuthenticateAsync for host {Host} with user {User}", host, user);
+                authResult = await connection.AuthenticateAsync(user, pass, cancellationToken);
+                Serilog.Log.Debug("AuthenticateAsync returned {Result} for host {Host}, user {User}", authResult, host, user);
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Error(ex,
+                    "AuthenticateAsync threw exception for host {Host}, user {User}. Exception type: {ExceptionType}",
+                    host, user, ex.GetType().Name);
+                throw new CouldNotLoginToUsenetException($"Could not login to usenet host. Exception: {ex.GetType().Name} - {ex.Message}");
+            }
+
+            if (!authResult)
+            {
+                Serilog.Log.Warning("AuthenticateAsync returned false for host {Host}, user {User}", host, user);
+                throw new CouldNotLoginToUsenetException("Could not login to usenet host. Check username and password.");
+            }
+        }
+        else
+        {
+            Serilog.Log.Information("Skipping authentication for host {Host} (no credentials configured - server does not require authentication)", host);
+        }
+
+        // Validate the connection by performing a simple DATE command
+        // This ensures the connection is actually usable after authentication
+        try
+        {
+            Serilog.Log.Debug("Validating connection by calling DATE command for host {Host}", host);
+            var dateResponse = await connection.DateAsync(cancellationToken);
+            Serilog.Log.Debug("DATE command successful for host {Host}, server date: {ServerDate}", host, dateResponse.Date);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex,
+                "Connection validation failed for host {Host} after successful authentication. This suggests the connection is not actually usable.",
+                host);
+            throw new CouldNotLoginToUsenetException($"Connection validation failed after authentication. Exception: {ex.GetType().Name} - {ex.Message}");
+        }
+
+        Serilog.Log.Information("Successfully connected and authenticated to {Host}:{Port} as {User}", host, port, user);
         return connection;
     }
 }
