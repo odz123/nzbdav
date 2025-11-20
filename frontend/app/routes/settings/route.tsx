@@ -41,6 +41,12 @@ const defaultConfig = {
     "arr.instances": "{\"RadarrInstances\":[],\"SonarrInstances\":[],\"QueueRules\":[]}",
     "repair.connections": "",
     "repair.enable": "false",
+    "repair.sampling-rate": "",
+    "repair.min-segments": "",
+    "repair.adaptive-sampling": "true",
+    "repair.cache-enabled": "true",
+    "repair.cache-ttl-hours": "",
+    "repair.parallel-files": "",
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
