@@ -3,4 +3,5 @@
 public class GetVersionResponse : SabBaseResponse
 {
     public string Version { get; set; } = string.Empty;
+    public string? BuildTimestamp { get; set; }
 }
