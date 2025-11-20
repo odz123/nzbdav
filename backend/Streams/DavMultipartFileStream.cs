@@ -12,7 +12,7 @@ public class DavMultipartFileStream(
 {
     private long _position = 0;
     private CombinedStream? _innerStream;
-    private bool _disposed;
+    private int _disposed = 0;
 
 
     public override void Flush()
@@ -105,16 +105,18 @@ public class DavMultipartFileStream(
 
     protected override void Dispose(bool disposing)
     {
-        if (_disposed) return;
-        _innerStream?.Dispose();
-        _disposed = true;
+        if (Interlocked.CompareExchange(ref _disposed, 1, 0) == 1) return;
+        if (disposing)
+        {
+            _innerStream?.Dispose();
+        }
+        base.Dispose(disposing);
     }
 
     public override async ValueTask DisposeAsync()
     {
-        if (_disposed) return;
+        if (Interlocked.CompareExchange(ref _disposed, 1, 0) == 1) return;
         if (_innerStream != null) await _innerStream.DisposeAsync();
-        _disposed = true;
         GC.SuppressFinalize(this);
     }
 }
