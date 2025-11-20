@@ -9,7 +9,7 @@ public class GetVersionController(
     ConfigManager configManager
 ) : SabApiController.BaseController(httpContext, configManager)
 {
-    public const string Version = "4.5.1";
+    public const string Version = "2";
     protected override bool RequiresAuthentication => false;
 
     protected override Task<IActionResult> Handle()
