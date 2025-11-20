@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Primitives;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
@@ -19,6 +20,7 @@ public class UsenetStreamingClient
     private readonly ConfigManager _configManager;
     private MultiServerNntpClient? _multiServerClient;
     private readonly IMemoryCache _healthySegmentCache;
+    private CancellationTokenSource _cacheInvalidationTokenSource = new();
 
     public UsenetStreamingClient(
         ConfigManager configManager,
@@ -54,8 +56,11 @@ public class UsenetStreamingClient
                 return;
 
             // clear healthy segment cache when usenet config changes
-            // MemoryCache doesn't have a Clear method, so we compact to remove expired items
-            _healthySegmentCache.Compact(1.0);
+            // Cancel the old token to invalidate all cached entries, then create a new token
+            var oldTokenSource = _cacheInvalidationTokenSource;
+            _cacheInvalidationTokenSource = new CancellationTokenSource();
+            oldTokenSource.Cancel();
+            oldTokenSource.Dispose();
 
             // update server configurations
             var newServerConfigs = configManager.GetUsenetServers();
@@ -352,7 +357,9 @@ public class UsenetStreamingClient
         _healthySegmentCache.Set(segmentId, true, new MemoryCacheEntryOptions
         {
             AbsoluteExpirationRelativeToNow = cacheTtl,
-            Size = 1 // Each entry counts as 1 toward the size limit
+            Size = 1, // Each entry counts as 1 toward the size limit
+            // When config changes, all cached entries are invalidated via cancellation token
+            ExpirationTokens = { new CancellationChangeToken(_cacheInvalidationTokenSource.Token) }
         });
     }
 
