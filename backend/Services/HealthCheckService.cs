@@ -24,7 +24,7 @@ public class HealthCheckService
     private readonly CancellationToken _cancellationToken = SigtermUtil.GetCancellationToken();
 
     // Cache for missing segment IDs with 24 hour TTL to allow recovery from temporary issues
-    private readonly IMemoryCache _missingSegmentCache;
+    private IMemoryCache _missingSegmentCache;
 
     public HealthCheckService
     (
@@ -46,8 +46,11 @@ public class HealthCheckService
             // this includes adding/removing/modifying servers in multi-server setup
             if (!_configManager.HasUsenetConfigChanged(configEventArgs.ChangedConfig)) return;
 
-            // Clear cache by compacting and removing all entries
-            _missingSegmentCache.Compact(1.0);
+            // Clear cache by disposing old cache and creating a new one
+            // Compact() only removes expired entries, not all entries
+            var oldCache = _missingSegmentCache;
+            _missingSegmentCache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 10000 });
+            oldCache.Dispose();
         };
 
         _ = StartMonitoringService();
