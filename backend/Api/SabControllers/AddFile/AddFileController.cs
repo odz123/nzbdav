@@ -32,7 +32,7 @@ public class AddFileController(
         var queueItem = new QueueItem
         {
             Id = Guid.NewGuid(),
-            CreatedAt = DateTime.Now,
+            CreatedAt = DateTime.UtcNow,
             FileName = request.FileName,
             JobName = Path.GetFileNameWithoutExtension(request.FileName),
             NzbFileSize = documentBytes.Length,

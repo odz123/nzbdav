@@ -138,7 +138,7 @@ public class MultiServerNntpClient : INntpClient
             throw new InvalidOperationException("No Usenet servers are configured");
 
         // Use primary server for date queries
-        return _servers.First().Client.DateAsync(cancellationToken);
+        return _servers[0].Client.DateAsync(cancellationToken);
     }
 
     public async Task WaitForReady(CancellationToken cancellationToken)

@@ -9,7 +9,7 @@ public static class DebounceUtil
         DateTime lastInvocationTime = default;
         return actionToMaybeInvoke =>
         {
-            var now = DateTime.Now;
+            var now = DateTime.UtcNow;
             bool shouldInvoke;
             lock (synchronizationLock)
             {
