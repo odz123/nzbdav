@@ -198,7 +198,7 @@ public class MultiServerNntpClient : INntpClient
             }
             catch (UsenetArticleNotFoundException ex)
             {
-                _logger?.LogDebug(
+                _logger?.LogWarning(
                     "Article {ResourceId} not found on server {ServerName}",
                     resourceId, server.Config.Name);
 
@@ -263,14 +263,21 @@ public class MultiServerNntpClient : INntpClient
         // All servers failed
         if (exceptions.Count > 0)
         {
-            var firstException = exceptions[0];
+            // Prioritize exceptions: article not found > authentication/connection errors
+            // If any server successfully connected but couldn't find the article, that's the real issue
+            var articleNotFoundException = exceptions.OfType<UsenetArticleNotFoundException>().FirstOrDefault();
+            var exceptionToThrow = articleNotFoundException ?? exceptions[0];
+
+            // Log summary of all failures for diagnostics
+            var exceptionSummary = string.Join(", ",
+                exceptions.GroupBy(e => e.GetType().Name)
+                          .Select(g => $"{g.Count()}x {g.Key}"));
 
             _logger?.LogError(
-                "All {ServerCount} servers failed for resource {ResourceId}. First error: {Error}",
-                availableServers.Count, resourceId, firstException.Message);
+                "All {ServerCount} servers failed for resource {ResourceId}. Failures: [{ExceptionSummary}]. Throwing: {Error}",
+                availableServers.Count, resourceId, exceptionSummary, exceptionToThrow.Message);
 
-            // Throw the first exception we encountered
-            throw firstException;
+            throw exceptionToThrow;
         }
 
         throw new InvalidOperationException("No servers available to execute operation");
