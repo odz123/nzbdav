@@ -231,6 +231,50 @@ volumes:
 ```
 
 
+# Building from Source
+
+If you want to build the Docker image locally (for development or customization), use the provided build script:
+
+```bash
+./build-docker.sh
+```
+
+This will automatically:
+- Generate a version string based on your git branch/commit (e.g., `main-abc1234`)
+- Add a build timestamp in ISO 8601 format
+- Build the Docker image with proper version information
+
+The version and build timestamp will be displayed in the UI footer and available via the `/api/version` endpoint.
+
+## Build Script Options
+
+```bash
+# Build with automatic version detection
+./build-docker.sh
+
+# Build with a specific version tag
+./build-docker.sh v1.0.0
+
+# Build with custom image name
+IMAGE_NAME=myuser/nzbdav ./build-docker.sh
+
+# Build and tag as latest
+./build-docker.sh && docker tag nzbdav/nzbdav:your-version nzbdav/nzbdav:latest
+```
+
+## Manual Docker Build
+
+If you prefer to build manually without the script:
+
+```bash
+docker build \
+  --build-arg NZBDAV_VERSION="my-version" \
+  --build-arg NZBDAV_BUILD_TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+  -t nzbdav/nzbdav:my-version \
+  .
+```
+
+
 # More screenshots
 <img width="300" alt="onboarding" src="https://github.com/user-attachments/assets/4ca1bfed-3b98-4ff2-8108-59ed07a25591" />
 <img width="300" alt="queue and history" src="https://github.com/user-attachments/assets/4f69f8dd-0dba-47b4-b02f-3e83ead293db" />
