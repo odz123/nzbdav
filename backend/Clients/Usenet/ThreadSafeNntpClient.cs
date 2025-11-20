@@ -34,7 +34,19 @@ public class ThreadSafeNntpClient : INntpClient
 
     public Task<NntpStatResponse> StatAsync(string segmentId, CancellationToken cancellationToken)
     {
-        return Synchronized(() => _client.Stat(new NntpMessageId(segmentId)), cancellationToken);
+        return Synchronized(() =>
+        {
+            var response = _client.Stat(new NntpMessageId(segmentId));
+
+            // Throw exception if article not found, so multi-server failover works
+            if (response.ResponseType == NntpStatResponseType.NoArticleWithThatNumber ||
+                response.ResponseType == NntpStatResponseType.NoArticleWithThatMessageId)
+            {
+                throw new UsenetArticleNotFoundException(segmentId);
+            }
+
+            return response;
+        }, cancellationToken);
     }
 
     public Task<NntpDateResponse> DateAsync(CancellationToken cancellationToken)

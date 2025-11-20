@@ -93,7 +93,7 @@ public class MultiServerNntpClient : INntpClient
             server => server.Client.StatAsync(segmentId, cancellationToken),
             segmentId,
             cancellationToken,
-            isArticleNotFoundRetryable: false);
+            isArticleNotFoundRetryable: true);
     }
 
     public Task<YencHeaderStream> GetSegmentStreamAsync(string segmentId, bool includeHeaders, CancellationToken cancellationToken)
@@ -204,7 +204,7 @@ public class MultiServerNntpClient : INntpClient
 
                 exceptions.Add(ex);
 
-                // If this is a STAT operation or article explicitly not found, don't retry on other servers
+                // If article not found is not retryable for this operation, throw immediately
                 if (!isArticleNotFoundRetryable)
                 {
                     _logger?.LogDebug("Article not found is not retryable for this operation");

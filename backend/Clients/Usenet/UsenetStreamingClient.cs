@@ -248,13 +248,6 @@ public class UsenetStreamingClient
             {
                 var result = await _client.StatAsync(segmentId, cancellationToken);
 
-                // Only these response codes indicate the article is actually missing
-                if (result.ResponseType == NntpStatResponseType.NoArticleWithThatNumber ||
-                    result.ResponseType == NntpStatResponseType.NoArticleWithThatMessageId)
-                {
-                    return (segmentId, false);
-                }
-
                 // Article exists
                 if (result.ResponseType == NntpStatResponseType.ArticleExists)
                 {
@@ -283,6 +276,11 @@ public class UsenetStreamingClient
 
                 // After all retries, assume success to avoid false positives
                 return (segmentId, true);
+            }
+            catch (UsenetArticleNotFoundException)
+            {
+                // Article not found on any server (multi-server failover already tried)
+                return (segmentId, false);
             }
             catch (Exception) when (attempt < maxRetries)
             {
