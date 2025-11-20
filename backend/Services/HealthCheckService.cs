@@ -37,8 +37,9 @@ public class HealthCheckService
 
         _configManager.OnConfigChanged += (_, configEventArgs) =>
         {
-            // when usenet host changes, clear the missing segments cache
-            if (!configEventArgs.ChangedConfig.ContainsKey("usenet.host")) return;
+            // when any usenet server configuration changes, clear the missing segments cache
+            // this includes adding/removing/modifying servers in multi-server setup
+            if (!_configManager.HasUsenetConfigChanged(configEventArgs.ChangedConfig)) return;
             lock (_missingSegmentIds) _missingSegmentIds.Clear();
         };
 
