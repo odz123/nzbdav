@@ -172,13 +172,16 @@ public class MultiServerNntpClient : INntpClient
         }
 
         var availableServers = serversSnapshot.Where(s => _healthTracker.IsServerAvailable(s.Config.Id)).ToList();
+        var unavailableServers = serversSnapshot.Where(s => !_healthTracker.IsServerAvailable(s.Config.Id)).ToList();
 
         if (availableServers.Count == 0)
         {
             _logger?.LogWarning("All servers are unavailable due to circuit breaker. Attempting all servers anyway.");
             availableServers = serversSnapshot.ToList();
+            unavailableServers.Clear();
         }
 
+        // Try available servers first
         foreach (var server in availableServers)
         {
             try
@@ -260,6 +263,88 @@ public class MultiServerNntpClient : INntpClient
             }
         }
 
+        // If all available servers failed with article not found, try unavailable servers as last resort
+        // This handles the case where an article exists only on a server with an open circuit breaker
+        if (isArticleNotFoundRetryable &&
+            unavailableServers.Count > 0 &&
+            exceptions.All(e => e is UsenetArticleNotFoundException))
+        {
+            _logger?.LogInformation(
+                "All {Count} available servers reported article not found for {ResourceId}. " +
+                "Attempting {UnavailableCount} unavailable servers as last resort.",
+                availableServers.Count, resourceId, unavailableServers.Count);
+
+            foreach (var server in unavailableServers)
+            {
+                try
+                {
+                    _logger?.LogDebug("Attempting operation on unavailable server: {ServerName}", server.Config.Name);
+                    var result = await operation(server);
+                    _healthTracker.RecordSuccess(server.Config.Id);
+
+                    _logger?.LogInformation(
+                        "Successfully retrieved {ResourceId} from previously unavailable server {ServerName} after {FailureCount} failures",
+                        resourceId, server.Config.Name, exceptions.Count);
+
+                    return result;
+                }
+                catch (UsenetArticleNotFoundException ex)
+                {
+                    _logger?.LogWarning(
+                        "Article {ResourceId} not found on unavailable server {ServerName}",
+                        resourceId, server.Config.Name);
+
+                    exceptions.Add(ex);
+                    // Try next server
+                    continue;
+                }
+                catch (CouldNotConnectToUsenetException ex)
+                {
+                    _logger?.LogWarning(
+                        "Could not connect to unavailable server {ServerName}: {Message}",
+                        server.Config.Name, ex.Message);
+
+                    _healthTracker.RecordFailure(server.Config.Id, ex);
+                    exceptions.Add(ex);
+                    // Try next server
+                    continue;
+                }
+                catch (CouldNotLoginToUsenetException ex)
+                {
+                    _logger?.LogWarning(
+                        "Could not authenticate to unavailable server {ServerName}: {Message}",
+                        server.Config.Name, ex.Message);
+
+                    _healthTracker.RecordFailure(server.Config.Id, ex);
+                    exceptions.Add(ex);
+                    // Try next server
+                    continue;
+                }
+                catch (NntpException ex)
+                {
+                    _logger?.LogWarning(
+                        "NNTP error on unavailable server {ServerName}: {Message}",
+                        server.Config.Name, ex.Message);
+
+                    _healthTracker.RecordFailure(server.Config.Id, ex);
+                    exceptions.Add(ex);
+                    // Try next server
+                    continue;
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogError(
+                        ex,
+                        "Unexpected error on unavailable server {ServerName}",
+                        server.Config.Name);
+
+                    exceptions.Add(ex);
+                    // Try next server
+                    continue;
+                }
+            }
+        }
+
         // All servers failed
         if (exceptions.Count > 0)
         {
@@ -278,9 +363,12 @@ public class MultiServerNntpClient : INntpClient
                 exceptions.GroupBy(e => e.GetType().Name)
                           .Select(g => $"{g.Count()}x {g.Key}"));
 
+            var totalServersAttempted = availableServers.Count +
+                (exceptions.All(e => e is UsenetArticleNotFoundException) ? unavailableServers.Count : 0);
+
             _logger?.LogError(
                 "All {ServerCount} servers failed for resource {ResourceId}. Failures: [{ExceptionSummary}]. Throwing: {Error}",
-                availableServers.Count, resourceId, exceptionSummary, exceptionToThrow.Message);
+                totalServersAttempted, resourceId, exceptionSummary, exceptionToThrow.Message);
 
             throw exceptionToThrow;
         }
