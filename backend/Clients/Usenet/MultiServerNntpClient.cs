@@ -263,10 +263,15 @@ public class MultiServerNntpClient : INntpClient
         // All servers failed
         if (exceptions.Count > 0)
         {
-            // Prioritize exceptions: article not found > authentication/connection errors
-            // If any server successfully connected but couldn't find the article, that's the real issue
+            // Prioritize exceptions to show the most relevant error to the user:
+            // 1. Article not found - means we successfully connected but article doesn't exist
+            // 2. Other operation errors (NonRetryableDownloadException) - means we connected but operation failed
+            // 3. Connection/authentication errors (RetryableDownloadException) - couldn't even try the operation
+            //
+            // This prevents misleading "Could not login" errors when the real issue is a missing article.
             var articleNotFoundException = exceptions.OfType<UsenetArticleNotFoundException>().FirstOrDefault();
-            var exceptionToThrow = articleNotFoundException ?? exceptions[0];
+            var nonRetryableException = exceptions.OfType<NonRetryableDownloadException>().FirstOrDefault();
+            var exceptionToThrow = articleNotFoundException ?? nonRetryableException ?? exceptions[0];
 
             // Log summary of all failures for diagnostics
             var exceptionSummary = string.Join(", ",

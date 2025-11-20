@@ -65,7 +65,18 @@ public class MultiConnectionNntpClient(ConnectionPool<INntpClient> connectionPoo
         int retries = 1
     )
     {
-        var connectionLock = await _connectionPool.GetConnectionLockAsync(cancellationToken);
+        ConnectionLock<INntpClient> connectionLock;
+        try
+        {
+            connectionLock = await _connectionPool.GetConnectionLockAsync(cancellationToken);
+        }
+        catch (Exception)
+        {
+            // If we can't get a connection (e.g., authentication failure during connection creation),
+            // let the exception bubble up to MultiServerNntpClient for failover handling
+            throw;
+        }
+
         try
         {
             var result = await task(connectionLock.Connection);
