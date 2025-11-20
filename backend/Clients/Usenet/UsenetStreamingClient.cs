@@ -101,11 +101,13 @@ public class UsenetStreamingClient
         CancellationToken cancellationToken = default
     )
     {
+        var startTime = System.Diagnostics.Stopwatch.StartNew();
         using var childCt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         using var _ = childCt.Token.SetScopedContext(cancellationToken.GetContext<object>());
         var token = childCt.Token;
 
         var segmentList = segmentIds.ToList();
+        var totalSegments = segmentList.Count;
 
         // Apply sampling if rate < 1.0
         var segmentsToCheck = samplingRate >= 1.0
@@ -118,9 +120,18 @@ public class UsenetStreamingClient
             ? segmentsToCheck.Where(s => !IsSegmentCachedAsHealthy(s)).ToList()
             : segmentsToCheck;
 
+        var sampledSegments = segmentsToCheck.Count;
+        var cacheHits = sampledSegments - segmentsToActuallyCheck.Count;
+
         // If all segments are cached as healthy, we're done
         if (segmentsToActuallyCheck.Count == 0)
+        {
+            startTime.Stop();
+            Serilog.Log.Information(
+                "Health check completed (all cached): {TotalSegments} segments, {SampledSegments} sampled, {CacheHits} cache hits, {ElapsedMs}ms",
+                totalSegments, sampledSegments, cacheHits, startTime.ElapsedMilliseconds);
             return;
+        }
 
         var tasks = segmentsToActuallyCheck
             .Select(async x => await CheckSegmentWithRetryAsync(x, token))
@@ -130,6 +141,7 @@ public class UsenetStreamingClient
         var consecutiveFailures = 0;
         var totalChecked = segmentsToActuallyCheck.Count;
 
+        var newCacheEntries = 0;
         await foreach (var task in tasks)
         {
             progress?.Report(++processed * 100 / totalChecked);
@@ -141,6 +153,10 @@ public class UsenetStreamingClient
                 // Early termination: if we find 3+ consecutive missing segments, file is unhealthy
                 if (consecutiveFailures >= 3)
                 {
+                    startTime.Stop();
+                    Serilog.Log.Warning(
+                        "Health check failed (early termination): {TotalSegments} segments, {SampledSegments} sampled ({SamplingRate:P0}), {CacheHits} cache hits, {CheckedSegments} checked, {ElapsedMs}ms - 3+ consecutive failures detected",
+                        totalSegments, sampledSegments, samplingRate, cacheHits, processed, startTime.ElapsedMilliseconds);
                     await childCt.CancelAsync();
                     throw new UsenetArticleNotFoundException(task.SegmentId);
                 }
@@ -151,16 +167,30 @@ public class UsenetStreamingClient
 
                 // Cache successful segment checks (if cache is enabled)
                 if (isCacheEnabled)
+                {
                     CacheHealthySegment(task.SegmentId);
+                    newCacheEntries++;
+                }
             }
 
             // If any single segment fails (and we haven't hit consecutive threshold), still fail
             if (!task.IsSuccess && consecutiveFailures < 3)
             {
+                startTime.Stop();
+                Serilog.Log.Warning(
+                    "Health check failed: {TotalSegments} segments, {SampledSegments} sampled ({SamplingRate:P0}), {CacheHits} cache hits, {CheckedSegments}/{TotalToCheck} checked, {ElapsedMs}ms - segment not found",
+                    totalSegments, sampledSegments, samplingRate, cacheHits, processed, totalChecked, startTime.ElapsedMilliseconds);
                 await childCt.CancelAsync();
                 throw new UsenetArticleNotFoundException(task.SegmentId);
             }
         }
+
+        startTime.Stop();
+        var samplingPercentage = totalSegments > 0 ? (double)sampledSegments / totalSegments : 1.0;
+        var cacheEfficiency = sampledSegments > 0 ? (double)cacheHits / sampledSegments : 0.0;
+        Serilog.Log.Information(
+            "Health check completed: {TotalSegments} segments, {SampledSegments} sampled ({SamplingPercentage:P0}), {CacheHits} cache hits ({CacheEfficiency:P0}), {CheckedSegments} network checks, {NewCacheEntries} new cache entries, {ElapsedMs}ms",
+            totalSegments, sampledSegments, samplingPercentage, cacheHits, cacheEfficiency, segmentsToActuallyCheck.Count, newCacheEntries, startTime.ElapsedMilliseconds);
     }
 
     private static List<string> GetStrategicSample(List<string> segments, double samplingRate, int minSegments)

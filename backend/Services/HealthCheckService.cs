@@ -65,6 +65,7 @@ public class HealthCheckService
                 using var _ = cts.Token.SetScopedContext(new ReservedConnectionsContext(reservedConnections));
 
                 // get multiple davItems to health-check in parallel
+                var cycleStartTime = System.Diagnostics.Stopwatch.StartNew();
                 var parallelCount = _configManager.GetParallelHealthCheckCount();
                 await using var dbContext = new DavDatabaseContext();
                 var dbClient = new DavDatabaseClient(dbContext);
@@ -83,21 +84,43 @@ public class HealthCheckService
 
                 // perform health checks in parallel
                 var connectionsPerFile = maxRepairConnections / davItems.Count;
+                Log.Information("Starting parallel health check: {FileCount} files, {ConnectionsPerFile} connections each",
+                    davItems.Count, connectionsPerFile);
+
                 var tasks = davItems.Select(davItem =>
                 {
                     // Each file gets its own database context to avoid concurrency issues
                     return Task.Run(async () =>
                     {
-                        await using var itemDbContext = new DavDatabaseContext();
-                        var itemDbClient = new DavDatabaseClient(itemDbContext);
-                        // Re-fetch the item to avoid tracking conflicts
-                        var item = await itemDbClient.Ctx.Items.FindAsync(new object[] { davItem.Id }, cts.Token);
-                        if (item != null)
-                            await PerformHealthCheck(item, itemDbClient, connectionsPerFile, cts.Token);
+                        var fileStartTime = System.Diagnostics.Stopwatch.StartNew();
+                        try
+                        {
+                            await using var itemDbContext = new DavDatabaseContext();
+                            var itemDbClient = new DavDatabaseClient(itemDbContext);
+                            // Re-fetch the item to avoid tracking conflicts
+                            var item = await itemDbClient.Ctx.Items.FindAsync(new object[] { davItem.Id }, cts.Token);
+                            if (item != null)
+                            {
+                                await PerformHealthCheck(item, itemDbClient, connectionsPerFile, cts.Token);
+                                fileStartTime.Stop();
+                                Log.Information("File health check completed: {FileName} ({FileType}) in {ElapsedMs}ms",
+                                    item.Name, item.Type, fileStartTime.ElapsedMilliseconds);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            fileStartTime.Stop();
+                            Log.Warning("File health check failed: {FileName} in {ElapsedMs}ms - {Error}",
+                                davItem.Name, fileStartTime.ElapsedMilliseconds, ex.Message);
+                            throw;
+                        }
                     }, cts.Token);
                 });
 
                 await Task.WhenAll(tasks);
+                cycleStartTime.Stop();
+                Log.Information("Parallel health check cycle completed: {FileCount} files in {ElapsedMs}ms ({AvgPerFile}ms/file)",
+                    davItems.Count, cycleStartTime.ElapsedMilliseconds, cycleStartTime.ElapsedMilliseconds / davItems.Count);
             }
             catch (Exception e)
             {
@@ -156,6 +179,13 @@ public class HealthCheckService
             // perform health check with sampling
             var samplingRate = GetSamplingRateForFile(davItem);
             var minSegments = _configManager.GetMinHealthCheckSegments();
+            var fileAge = davItem.ReleaseDate != null
+                ? (DateTimeOffset.UtcNow - davItem.ReleaseDate.Value).Days
+                : (int?)null;
+
+            Log.Information("Health check starting: {FileName} - {SegmentCount} segments, {SamplingRate:P0} sampling rate, {FileAgeDays} days old",
+                davItem.Name, segments.Count, samplingRate, fileAge);
+
             var progress = progressHook.ToPercentage(segments.Count);
             await _usenetClient.CheckAllSegmentsAsync(segments, concurrency, samplingRate, minSegments, progress, ct);
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|100");
