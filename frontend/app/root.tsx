@@ -29,6 +29,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   return {
     useLayout: true,
     version: process.env.NZBDAV_VERSION,
+    buildTimestamp: process.env.NZBDAV_BUILD_TIMESTAMP,
     isFrontendAuthDisabled: IS_FRONTEND_AUTH_DISABLED,
   };
 }
@@ -54,7 +55,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App({ loaderData }: Route.ComponentProps) {
-  const { useLayout, version, isFrontendAuthDisabled } = loaderData;
+  const { useLayout, version, buildTimestamp, isFrontendAuthDisabled } = loaderData;
   const location = useLocation();
   const navigation = useNavigation();
   const isNavigating = Boolean(navigation.location);
@@ -73,6 +74,7 @@ export default function App({ loaderData }: Route.ComponentProps) {
         leftNavChild={
           <LeftNavigation
             version={version}
+            buildTimestamp={buildTimestamp}
             isFrontendAuthDisabled={isFrontendAuthDisabled} />
         } />
     );

@@ -51,6 +51,10 @@ jobs:
             echo "NZBDAV_VERSION=${{ github.ref_name }}" >> $GITHUB_OUTPUT
           fi
 
+          # Generate build timestamp in ISO 8601 format (UTC)
+          BUILD_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "NZBDAV_BUILD_TIMESTAMP=${BUILD_TIMESTAMP}" >> $GITHUB_OUTPUT
+
           GHCR_REPO="ghcr.io/${{ github.repository }}"
           DOCKERHUB_REPO="nzbdav/nzbdav"
           if [[ "${{ github.ref_name }}" == "main" ]]; then
@@ -81,3 +85,4 @@ jobs:
           tags: ${{ steps.set_vars.outputs.TAGS }}
           build-args: |
             NZBDAV_VERSION=${{ steps.set_vars.outputs.NZBDAV_VERSION }}
+            NZBDAV_BUILD_TIMESTAMP=${{ steps.set_vars.outputs.NZBDAV_BUILD_TIMESTAMP }}

@@ -14,8 +14,15 @@ public class GetVersionController(
 
     protected override Task<IActionResult> Handle()
     {
-        // mimic sabnzbd version
-        var version = new GetVersionResponse() { Version = Version };
-        return Task.FromResult<IActionResult>(Ok(version));
+        // Read version and build timestamp from environment variables, with fallbacks
+        var version = Environment.GetEnvironmentVariable("NZBDAV_VERSION") ?? Version;
+        var buildTimestamp = Environment.GetEnvironmentVariable("NZBDAV_BUILD_TIMESTAMP");
+
+        var response = new GetVersionResponse()
+        {
+            Version = version,
+            BuildTimestamp = buildTimestamp
+        };
+        return Task.FromResult<IActionResult>(Ok(response));
     }
 }

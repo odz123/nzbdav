@@ -6,10 +6,11 @@ import { LiveUsenetConnections } from "../live-usenet-connections/live-usenet-co
 
 export type LeftNavigationProps = {
     version?: string,
+    buildTimestamp?: string,
     isFrontendAuthDisabled?: boolean,
 }
 
-export function LeftNavigation({ version, isFrontendAuthDisabled }: LeftNavigationProps) {
+export function LeftNavigation({ version, buildTimestamp, isFrontendAuthDisabled }: LeftNavigationProps) {
     return (
         <div className={styles.container}>
             <Item target="/queue">
@@ -43,6 +44,11 @@ export function LeftNavigation({ version, isFrontendAuthDisabled }: LeftNavigati
                 <div className={styles["footer-item"]}>
                     version: {version || 'unknown'}
                 </div>
+                {buildTimestamp && (
+                    <div className={styles["footer-item"]} style={{ fontSize: '0.85em', opacity: 0.8 }}>
+                        built: {new Date(buildTimestamp).toLocaleString()}
+                    </div>
+                )}
                 {!isFrontendAuthDisabled && <>
                     <hr />
                     <Form method="post" action="/logout">
