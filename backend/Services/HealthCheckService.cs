@@ -64,23 +64,63 @@ public class HealthCheckService
                 var reservedConnections = _configManager.GetMaxConnections() - maxRepairConnections;
                 using var _ = cts.Token.SetScopedContext(new ReservedConnectionsContext(reservedConnections));
 
-                // get the davItem to health-check
+                // get multiple davItems to health-check in parallel
+                var cycleStartTime = System.Diagnostics.Stopwatch.StartNew();
+                var parallelCount = _configManager.GetParallelHealthCheckCount();
                 await using var dbContext = new DavDatabaseContext();
                 var dbClient = new DavDatabaseClient(dbContext);
                 var currentDateTime = DateTimeOffset.UtcNow;
-                var davItem = await GetHealthCheckQueueItems(dbClient)
+                var davItems = await GetHealthCheckQueueItems(dbClient)
                     .Where(x => x.NextHealthCheck == null || x.NextHealthCheck < currentDateTime)
-                    .FirstOrDefaultAsync(cts.Token);
+                    .Take(parallelCount)
+                    .ToListAsync(cts.Token);
 
-                // if there is no item to health-check, don't do anything
-                if (davItem == null)
+                // if there are no items to health-check, don't do anything
+                if (davItems.Count == 0)
                 {
                     await Task.Delay(TimeSpan.FromSeconds(5), cts.Token);
                     continue;
                 }
 
-                // perform the health check
-                await PerformHealthCheck(davItem, dbClient, maxRepairConnections, cts.Token);
+                // perform health checks in parallel
+                var connectionsPerFile = Math.Max(1, maxRepairConnections / davItems.Count);
+                Log.Information("Starting parallel health check: {FileCount} files, {ConnectionsPerFile} connections each",
+                    davItems.Count, connectionsPerFile);
+
+                var tasks = davItems.Select(davItem =>
+                {
+                    // Each file gets its own database context to avoid concurrency issues
+                    return Task.Run(async () =>
+                    {
+                        var fileStartTime = System.Diagnostics.Stopwatch.StartNew();
+                        try
+                        {
+                            await using var itemDbContext = new DavDatabaseContext();
+                            var itemDbClient = new DavDatabaseClient(itemDbContext);
+                            // Re-fetch the item to avoid tracking conflicts
+                            var item = await itemDbClient.Ctx.Items.FindAsync(new object[] { davItem.Id }, cts.Token);
+                            if (item != null)
+                            {
+                                await PerformHealthCheck(item, itemDbClient, connectionsPerFile, cts.Token);
+                                fileStartTime.Stop();
+                                Log.Information("File health check completed: {FileName} ({FileType}) in {ElapsedMs}ms",
+                                    item.Name, item.Type, fileStartTime.ElapsedMilliseconds);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            fileStartTime.Stop();
+                            Log.Warning("File health check failed: {FileName} in {ElapsedMs}ms - {Error}",
+                                davItem.Name, fileStartTime.ElapsedMilliseconds, ex.Message);
+                            throw;
+                        }
+                    }, cts.Token);
+                });
+
+                await Task.WhenAll(tasks);
+                cycleStartTime.Stop();
+                Log.Information("Parallel health check cycle completed: {FileCount} files in {ElapsedMs}ms ({AvgPerFile}ms/file)",
+                    davItems.Count, cycleStartTime.ElapsedMilliseconds, cycleStartTime.ElapsedMilliseconds / davItems.Count);
             }
             catch (Exception e)
             {
@@ -136,9 +176,18 @@ public class HealthCheckService
                 debounce(() => _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, message));
             };
 
-            // perform health check
+            // perform health check with sampling
+            var samplingRate = GetSamplingRateForFile(davItem);
+            var minSegments = _configManager.GetMinHealthCheckSegments();
+            var fileAge = davItem.ReleaseDate != null
+                ? (DateTimeOffset.UtcNow - davItem.ReleaseDate.Value).Days
+                : (int?)null;
+
+            Log.Information("Health check starting: {FileName} - {SegmentCount} segments, {SamplingRate:P0} sampling rate, {FileAgeDays} days old",
+                davItem.Name, segments.Count, samplingRate, fileAge);
+
             var progress = progressHook.ToPercentage(segments.Count);
-            await _usenetClient.CheckAllSegmentsAsync(segments, concurrency, progress, ct);
+            await _usenetClient.CheckAllSegmentsAsync(segments, concurrency, samplingRate, minSegments, progress, ct);
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|100");
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
 
@@ -357,5 +406,26 @@ public class HealthCheckService
                 if (_missingSegmentIds.Contains(segmentId))
                     throw new UsenetArticleNotFoundException(segmentId);
         }
+    }
+
+    private double GetSamplingRateForFile(DavItem davItem)
+    {
+        var baseSamplingRate = _configManager.GetHealthCheckSamplingRate();
+
+        // If adaptive sampling is disabled, use base rate
+        if (!_configManager.IsAdaptiveSamplingEnabled())
+            return baseSamplingRate;
+
+        // Calculate file age
+        var age = DateTimeOffset.UtcNow - (davItem.ReleaseDate ?? DateTimeOffset.UtcNow);
+
+        // Adjust sampling rate based on age (newer files = higher sampling rate)
+        return age.TotalDays switch
+        {
+            < 30 => Math.Min(1.0, baseSamplingRate * 2.0),   // New files: double the rate (max 100%)
+            < 180 => baseSamplingRate,                        // Medium age: use configured rate
+            < 365 => Math.Max(0.05, baseSamplingRate * 0.67), // Older files: reduce to 67%
+            _ => Math.Max(0.05, baseSamplingRate * 0.33)      // Very old: reduce to 33% (min 5%)
+        };
     }
 }

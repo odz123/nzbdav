@@ -18,6 +18,7 @@ public class UsenetStreamingClient
     private readonly ServerHealthTracker _healthTracker;
     private readonly ConfigManager _configManager;
     private MultiServerNntpClient? _multiServerClient;
+    private readonly IMemoryCache _healthySegmentCache;
 
     public UsenetStreamingClient(
         ConfigManager configManager,
@@ -28,6 +29,9 @@ public class UsenetStreamingClient
         _websocketManager = websocketManager;
         _healthTracker = healthTracker;
         _configManager = configManager;
+
+        // initialize healthy segment cache (24 hour TTL, max 50,000 entries)
+        _healthySegmentCache = new MemoryCache(new MemoryCacheOptions() { SizeLimit = 50000 });
 
         // get server configurations
         var serverConfigs = configManager.GetUsenetServers();
@@ -48,6 +52,10 @@ public class UsenetStreamingClient
             // if unrelated config changed, do nothing
             if (!configManager.HasUsenetConfigChanged(configEventArgs.ChangedConfig))
                 return;
+
+            // clear healthy segment cache when usenet config changes
+            // MemoryCache doesn't have a Clear method, so we compact to remove expired items
+            _healthySegmentCache.Compact(1.0);
 
             // update server configurations
             var newServerConfigs = configManager.GetUsenetServers();
@@ -72,7 +80,7 @@ public class UsenetStreamingClient
         // This provides an aggregate view across all servers
     }
 
-    public async Task CheckAllSegmentsAsync
+    public Task CheckAllSegmentsAsync
     (
         IEnumerable<string> segmentIds,
         int concurrency,
@@ -80,22 +88,151 @@ public class UsenetStreamingClient
         CancellationToken cancellationToken = default
     )
     {
+        return CheckAllSegmentsAsync(segmentIds, concurrency, 1.0, 10, progress, cancellationToken);
+    }
+
+    public async Task CheckAllSegmentsAsync
+    (
+        IEnumerable<string> segmentIds,
+        int concurrency,
+        double samplingRate,
+        int minSegments,
+        IProgress<int>? progress = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        var startTime = System.Diagnostics.Stopwatch.StartNew();
         using var childCt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         using var _ = childCt.Token.SetScopedContext(cancellationToken.GetContext<object>());
         var token = childCt.Token;
 
-        var tasks = segmentIds
+        var segmentList = segmentIds.ToList();
+        var totalSegments = segmentList.Count;
+
+        // Apply sampling if rate < 1.0
+        var segmentsToCheck = samplingRate >= 1.0
+            ? segmentList
+            : GetStrategicSample(segmentList, samplingRate, minSegments);
+
+        // Filter out segments that are cached as healthy (if cache is enabled)
+        var isCacheEnabled = _configManager.IsHealthySegmentCacheEnabled();
+        var segmentsToActuallyCheck = isCacheEnabled
+            ? segmentsToCheck.Where(s => !IsSegmentCachedAsHealthy(s)).ToList()
+            : segmentsToCheck;
+
+        var sampledSegments = segmentsToCheck.Count;
+        var cacheHits = sampledSegments - segmentsToActuallyCheck.Count;
+
+        // If all segments are cached as healthy, we're done
+        if (segmentsToActuallyCheck.Count == 0)
+        {
+            startTime.Stop();
+            Serilog.Log.Information(
+                "Health check completed (all cached): {TotalSegments} segments, {SampledSegments} sampled, {CacheHits} cache hits, {ElapsedMs}ms",
+                totalSegments, sampledSegments, cacheHits, startTime.ElapsedMilliseconds);
+            return;
+        }
+
+        var tasks = segmentsToActuallyCheck
             .Select(async x => await CheckSegmentWithRetryAsync(x, token))
             .WithConcurrencyAsync(concurrency);
 
         var processed = 0;
+        var consecutiveFailures = 0;
+        var totalChecked = segmentsToActuallyCheck.Count;
+
+        var newCacheEntries = 0;
         await foreach (var task in tasks)
         {
             progress?.Report(++processed);
-            if (task.IsSuccess) continue;
-            await childCt.CancelAsync();
-            throw new UsenetArticleNotFoundException(task.SegmentId);
+
+            if (!task.IsSuccess)
+            {
+                consecutiveFailures++;
+
+                // Early termination: if we find 3+ consecutive missing segments, file is unhealthy
+                if (consecutiveFailures >= 3)
+                {
+                    startTime.Stop();
+                    Serilog.Log.Warning(
+                        "Health check failed (early termination): {TotalSegments} segments, {SampledSegments} sampled ({SamplingRate:P0}), {CacheHits} cache hits, {CheckedSegments} checked, {ElapsedMs}ms - 3+ consecutive failures detected",
+                        totalSegments, sampledSegments, samplingRate, cacheHits, processed, startTime.ElapsedMilliseconds);
+                    await childCt.CancelAsync();
+                    throw new UsenetArticleNotFoundException(task.SegmentId);
+                }
+            }
+            else
+            {
+                consecutiveFailures = 0;
+
+                // Cache successful segment checks (if cache is enabled)
+                if (isCacheEnabled)
+                {
+                    CacheHealthySegment(task.SegmentId);
+                    newCacheEntries++;
+                }
+            }
+
+            // If any single segment fails (and we haven't hit consecutive threshold), still fail
+            if (!task.IsSuccess && consecutiveFailures < 3)
+            {
+                startTime.Stop();
+                Serilog.Log.Warning(
+                    "Health check failed: {TotalSegments} segments, {SampledSegments} sampled ({SamplingRate:P0}), {CacheHits} cache hits, {CheckedSegments}/{TotalToCheck} checked, {ElapsedMs}ms - segment not found",
+                    totalSegments, sampledSegments, samplingRate, cacheHits, processed, totalChecked, startTime.ElapsedMilliseconds);
+                await childCt.CancelAsync();
+                throw new UsenetArticleNotFoundException(task.SegmentId);
+            }
         }
+
+        startTime.Stop();
+        var samplingPercentage = totalSegments > 0 ? (double)sampledSegments / totalSegments : 1.0;
+        var cacheEfficiency = sampledSegments > 0 ? (double)cacheHits / sampledSegments : 0.0;
+        Serilog.Log.Information(
+            "Health check completed: {TotalSegments} segments, {SampledSegments} sampled ({SamplingPercentage:P0}), {CacheHits} cache hits ({CacheEfficiency:P0}), {CheckedSegments} network checks, {NewCacheEntries} new cache entries, {ElapsedMs}ms",
+            totalSegments, sampledSegments, samplingPercentage, cacheHits, cacheEfficiency, segmentsToActuallyCheck.Count, newCacheEntries, startTime.ElapsedMilliseconds);
+    }
+
+    private static List<string> GetStrategicSample(List<string> segments, double samplingRate, int minSegments)
+    {
+        var segmentCount = segments.Count;
+        var sampleSize = Math.Max(minSegments, (int)(segmentCount * samplingRate));
+
+        // If sample size >= total segments, return all segments
+        if (sampleSize >= segmentCount)
+            return segments;
+
+        var sample = new HashSet<string>();
+
+        // Always check first 3 and last 3 segments (most likely to be missing)
+        var edgeCount = Math.Min(3, segmentCount / 2);
+        foreach (var segment in segments.Take(edgeCount))
+            sample.Add(segment);
+        foreach (var segment in segments.TakeLast(edgeCount))
+            sample.Add(segment);
+
+        // Fill remaining quota with random samples from middle
+        var remaining = sampleSize - sample.Count;
+        if (remaining > 0)
+        {
+            var startIdx = edgeCount;
+            var endIdx = segmentCount - edgeCount;
+            var middleSegments = segments.Skip(startIdx).Take(endIdx - startIdx).ToList();
+
+            if (middleSegments.Count > 0)
+            {
+                var random = new Random();
+                var randomSample = middleSegments
+                    .OrderBy(_ => random.Next())
+                    .Take(remaining);
+
+                foreach (var segment in randomSample)
+                    sample.Add(segment);
+            }
+        }
+
+        // Return in original order to maintain sequential checking benefits
+        return segments.Where(s => sample.Contains(s)).ToList();
     }
 
     private async Task<(string SegmentId, bool IsSuccess)> CheckSegmentWithRetryAsync(
@@ -204,6 +341,21 @@ public class UsenetStreamingClient
     public IReadOnlyList<UsenetServerConfig> GetServerConfigs()
     {
         return _multiServerClient?.GetServerConfigs() ?? Array.Empty<UsenetServerConfig>();
+    }
+
+    private bool IsSegmentCachedAsHealthy(string segmentId)
+    {
+        return _healthySegmentCache.TryGetValue(segmentId, out _);
+    }
+
+    private void CacheHealthySegment(string segmentId)
+    {
+        var cacheTtl = _configManager.GetHealthySegmentCacheTtl();
+        _healthySegmentCache.Set(segmentId, true, new MemoryCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = cacheTtl,
+            Size = 1 // Each entry counts as 1 toward the size limit
+        });
     }
 
     public static async ValueTask<INntpClient> CreateNewConnection

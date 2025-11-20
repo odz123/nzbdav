@@ -161,7 +161,9 @@ public class QueueItemProcessor(
                 .Offset(100)
                 .ToPercentage(articlesToCheck.Count);
             var concurrency = configManager.GetMaxQueueConnections();
-            await usenetClient.CheckAllSegmentsAsync(articlesToCheck, concurrency, part3Progress, ct);
+            var samplingRate = configManager.GetHealthCheckSamplingRate();
+            var minSegments = configManager.GetMinHealthCheckSegments();
+            await usenetClient.CheckAllSegmentsAsync(articlesToCheck, concurrency, samplingRate, minSegments, part3Progress, ct);
             checkedFullHealth = true;
         }
 
