@@ -61,7 +61,7 @@ public class ThreadSafeNntpClient : INntpClient
             var headResponse = _client.Head(new NntpMessageId(segmentId));
 
             // Throw exception if article not found, so multi-server failover works
-            if (!headResponse.Success || headResponse?.Article?.Headers == null)
+            if (headResponse == null || !headResponse.Success || headResponse.Article?.Headers == null)
             {
                 throw new UsenetArticleNotFoundException(segmentId);
             }
@@ -149,7 +149,7 @@ public class ThreadSafeNntpClient : INntpClient
             var articleResponse = _client.Article(new NntpMessageId(segmentId));
 
             // Throw exception if article not found, so multi-server failover works
-            if (!articleResponse.Success || articleResponse?.Article?.Body == null)
+            if (articleResponse == null || !articleResponse.Success || articleResponse.Article?.Body == null)
             {
                 throw new UsenetArticleNotFoundException(segmentId);
             }
@@ -164,7 +164,7 @@ public class ThreadSafeNntpClient : INntpClient
         var bodyResponse = _client.Body(new NntpMessageId(segmentId));
 
         // Throw exception if article not found, so multi-server failover works
-        if (!bodyResponse.Success || bodyResponse?.Article?.Body == null)
+        if (bodyResponse == null || !bodyResponse.Success || bodyResponse.Article?.Body == null)
         {
             throw new UsenetArticleNotFoundException(segmentId);
         }
