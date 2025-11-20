@@ -64,11 +64,15 @@ public class DatabaseStoreWatchFolder(
             Category = configManager.GetManualUploadCategory(),
             Priority = QueueItem.PriorityOption.Normal,
             PostProcessing = QueueItem.PostProcessingOption.RepairUnpackDelete,
-            PauseUntil = DateTime.Now.AddSeconds(3),
+            PauseUntil = DateTime.UtcNow.AddSeconds(3),
             NzbFileContents = nzbFileContents,
             CancellationToken = request.CancellationToken
         };
         var response = await controller.AddFileAsync(addFileRequest);
+
+        if (response.NzoIds.Length == 0)
+            throw new InvalidOperationException("Failed to add file to queue: no queue item ID returned");
+
         var queueItem = dbClient.Ctx.ChangeTracker
             .Entries<QueueItem>()
             .Select(x => x.Entity)

@@ -144,7 +144,9 @@ public class HealthCheckService
 
             // update the database
             davItem.LastHealthCheck = DateTimeOffset.UtcNow;
-            davItem.NextHealthCheck = davItem.ReleaseDate + 2 * (davItem.LastHealthCheck - davItem.ReleaseDate);
+            davItem.NextHealthCheck = davItem.ReleaseDate != null
+                ? davItem.ReleaseDate + 2 * (davItem.LastHealthCheck - davItem.ReleaseDate)
+                : null;
             dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
             {
                 Id = Guid.NewGuid(),

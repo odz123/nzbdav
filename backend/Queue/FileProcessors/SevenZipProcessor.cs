@@ -94,6 +94,16 @@ public class SevenZipProcessor : BaseProcessor
         MultipartFile multipartFile
     )
     {
+        // Handle zero-length files
+        if (sevenZipEntry.ByteRangeWithinArchive.Count == 0)
+        {
+            return new DavMultipartFile.Meta()
+            {
+                AesParams = sevenZipEntry.AesParams,
+                FileParts = Array.Empty<DavMultipartFile.FilePart>(),
+            };
+        }
+
         var (startIndexInclusive, startIndexByteRange) = InterpolationSearch.Find(
             sevenZipEntry.ByteRangeWithinArchive.StartInclusive,
             new LongRange(0, multipartFile.FileParts.Count),
