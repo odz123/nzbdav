@@ -118,10 +118,10 @@ public class QueueItemProcessor(
         var archivePassword = nzb.MetaData.GetValueOrDefault("password")?.FirstOrDefault();
         var nzbFiles = nzb.Files.Where(x => x.Segments.Count > 0).ToList();
 
-        // step 0 -- perform article existence pre-check against cache
-        // https://github.com/nzbdav-dev/nzbdav/issues/101
-        var articlesToPrecheck = nzbFiles.SelectMany(x => x.Segments).Select(x => x.MessageId.Value);
-        healthCheckService.CheckCachedMissingSegmentIds(articlesToPrecheck);
+        // step 0 -- removed preemptive cache check to allow multi-server failover
+        // The missing segment cache is populated AFTER all servers have been tried
+        // This ensures backup servers can provide segments that primary server lacks
+        // Previous behavior: checked cache before trying any server, blocking failover
 
         // step 1 -- get name and size of each nzb file
         var part1Progress = progress
