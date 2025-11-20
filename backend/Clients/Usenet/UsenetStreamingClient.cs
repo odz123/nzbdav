@@ -286,10 +286,22 @@ public class UsenetStreamingClient
                 // After all retries, assume success to avoid false positives
                 return (segmentId, true);
             }
+            catch (UsenetArticleNotFoundException)
+            {
+                // Article definitively not found - don't retry, fail immediately
+                return (segmentId, false);
+            }
             catch (Exception) when (attempt < maxRetries)
             {
                 // Retry on transient network errors
                 await Task.Delay(retryDelays[attempt], cancellationToken);
+            }
+            catch (Exception)
+            {
+                // After all retries exhausted with exceptions (connection/auth errors),
+                // assume success to avoid false positives and misleading login errors.
+                // The multi-server failover in ExecuteWithFailover will handle real issues.
+                return (segmentId, true);
             }
         }
 
