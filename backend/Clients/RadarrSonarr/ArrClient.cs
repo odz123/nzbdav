@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
@@ -13,9 +13,17 @@ public class ArrClient(string host, string apiKey)
     private const string BasePath = "/api/v3";
 
     // Reusable HttpClient to prevent socket exhaustion
-    private readonly HttpClient _httpClient = new()
+    // Configured to prefer HTTP/3 with automatic fallback to HTTP/2 or HTTP/1.1
+    private readonly HttpClient _httpClient = new(new SocketsHttpHandler
     {
-        DefaultRequestHeaders = { { "X-Api-Key", apiKey } }
+        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+        PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+        EnableMultipleHttp2Connections = true
+    })
+    {
+        DefaultRequestHeaders = { { "X-Api-Key", apiKey } },
+        DefaultRequestVersion = HttpVersion.Version30, // HTTP/3
+        DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
     };
 
     public Task<ArrApiInfoResponse> GetApiInfo() =>

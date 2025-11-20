@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NWebDav.Server;
@@ -69,7 +70,24 @@ class Program
         // initialize webapp
         var builder = WebApplication.CreateBuilder(args);
         var maxRequestBodySize = EnvironmentUtil.GetLongVariable("MAX_REQUEST_BODY_SIZE") ?? 100 * 1024 * 1024;
-        builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = maxRequestBodySize);
+        builder.WebHost.ConfigureKestrel(options =>
+        {
+            options.Limits.MaxRequestBodySize = maxRequestBodySize;
+
+            // Enable HTTP/3 support
+            // HTTP/3 uses QUIC protocol which provides:
+            // - Faster connection establishment (1-RTT vs 2-RTT)
+            // - Better multiplexing (no head-of-line blocking)
+            // - Improved mobile performance (connection migration)
+            // - Better packet loss resilience
+            options.ListenAnyIP(8080, listenOptions =>
+            {
+                // Enable HTTP/1.1, HTTP/2, and HTTP/3
+                // Clients will automatically negotiate the best protocol
+                // Falls back gracefully if HTTP/3 is not supported
+                listenOptions.Protocols = HttpProtocols.Http1AndHttp2AndHttp3;
+            });
+        });
         builder.Host.UseSerilog();
         builder.Services.AddControllers();
         builder.Services.AddHealthChecks();
