@@ -38,6 +38,9 @@ public class RarAggregator(DavDatabaseClient dbClient, DavItem mountDirectory, b
         {
             var pathWithinArchive = archiveFile.Key;
             var fileParts = archiveFile.Value.ToArray();
+            if (fileParts.Length == 0)
+                continue; // Skip empty file parts
+
             var aesParams = fileParts.Select(x => x.AesParams).FirstOrDefault(x => x != null);
             var fileSize = aesParams?.DecodedSize ?? fileParts.Sum(x => x.ByteRangeWithinPart.Count);
             var parentDirectory = EnsureExtractPath(pathWithinArchive);

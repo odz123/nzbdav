@@ -34,6 +34,9 @@ public class SevenZipProcessor : BaseProcessor
 
     public override async Task<BaseProcessor.Result?> ProcessAsync()
     {
+        if (_fileInfos.Count == 0)
+            throw new InvalidOperationException("No file parts available for processing");
+
         var multipartFile = await GetMultipartFile();
         await using var stream = new MultipartFileStream(multipartFile, _client);
         var sevenZipEntries = await SevenZipUtil.GetSevenZipEntriesAsync(stream, _archivePassword, _ct);

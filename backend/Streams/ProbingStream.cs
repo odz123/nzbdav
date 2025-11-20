@@ -45,6 +45,9 @@ public class ProbingStream(Stream stream) : Stream
 
         if (_probeByte.HasValue)
         {
+            if (count == 0)
+                return 0;
+
             buffer[offset] = _probeByte.Value;
             _probeByte = null;
             var read = stream.Read(buffer, offset + 1, count - 1);
@@ -65,6 +68,9 @@ public class ProbingStream(Stream stream) : Stream
 
         if (_probeByte.HasValue)
         {
+            if (count == 0)
+                return 0;
+
             buffer[offset] = _probeByte.Value;
             _probeByte = null;
             var read = await stream.ReadAsync(buffer.AsMemory(offset + 1, count - 1), cancellationToken);

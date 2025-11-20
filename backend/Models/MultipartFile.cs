@@ -5,7 +5,9 @@ namespace NzbWebDAV.Models;
 public class MultipartFile
 {
     public required List<FilePart> FileParts { get; init; }
-    public long FileSize => FileParts.Last().ByteRange.EndExclusive;
+    public long FileSize => FileParts.Count > 0
+        ? FileParts.Last().ByteRange.EndExclusive
+        : 0L;
 
     public class FilePart
     {
