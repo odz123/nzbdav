@@ -83,7 +83,7 @@ public class HealthCheckService
                 }
 
                 // perform health checks in parallel
-                var connectionsPerFile = maxRepairConnections / davItems.Count;
+                var connectionsPerFile = Math.Max(1, maxRepairConnections / davItems.Count);
                 Log.Information("Starting parallel health check: {FileCount} files, {ConnectionsPerFile} connections each",
                     davItems.Count, connectionsPerFile);
 

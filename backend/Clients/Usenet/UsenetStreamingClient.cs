@@ -144,7 +144,7 @@ public class UsenetStreamingClient
         var newCacheEntries = 0;
         await foreach (var task in tasks)
         {
-            progress?.Report(++processed * 100 / totalChecked);
+            progress?.Report(++processed);
 
             if (!task.IsSuccess)
             {

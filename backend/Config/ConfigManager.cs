@@ -220,7 +220,9 @@ public class ConfigManager
     public int GetMinHealthCheckSegments()
     {
         var value = StringUtil.EmptyToNull(GetConfigValue("repair.min-segments")) ?? "10";
-        return int.TryParse(value, out var result) ? result : 10;
+        if (!int.TryParse(value, out var result))
+            result = 10;
+        return Math.Clamp(result, 1, 100); // 1 to 100 segments
     }
 
     public bool IsAdaptiveSamplingEnabled()

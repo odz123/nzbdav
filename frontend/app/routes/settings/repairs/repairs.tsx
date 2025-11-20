@@ -79,10 +79,13 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                     id="sampling-rate-input"
                     aria-describedby="sampling-rate-help"
                     placeholder={"15"}
-                    value={config["repair.sampling-rate"] ? (parseFloat(config["repair.sampling-rate"]) * 100).toString() : ""}
+                    value={(() => {
+                        const decimal = parseFloat(config["repair.sampling-rate"]);
+                        return !isNaN(decimal) && config["repair.sampling-rate"] ? (decimal * 100).toString() : "";
+                    })()}
                     onChange={e => {
                         const percent = parseFloat(e.target.value);
-                        const decimal = !isNaN(percent) ? (percent / 100).toString() : e.target.value;
+                        const decimal = !isNaN(percent) ? (percent / 100).toString() : "";
                         setNewConfig({ ...config, "repair.sampling-rate": decimal });
                     }} />
                 <Form.Text id="sampling-rate-help" muted>
