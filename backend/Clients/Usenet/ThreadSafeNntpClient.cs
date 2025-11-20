@@ -59,7 +59,13 @@ public class ThreadSafeNntpClient : INntpClient
         return Synchronized(() =>
         {
             var headResponse = _client.Head(new NntpMessageId(segmentId));
-            if (headResponse?.Article?.Headers == null) throw new UsenetArticleNotFoundException(segmentId);
+
+            // Throw exception if article not found, so multi-server failover works
+            if (headResponse == null || !headResponse.Success || headResponse.Article?.Headers == null)
+            {
+                throw new UsenetArticleNotFoundException(segmentId);
+            }
+
             return new UsenetArticleHeaders(headResponse.Article.Headers);
         }, cancellationToken);
     }
@@ -141,7 +147,13 @@ public class ThreadSafeNntpClient : INntpClient
         if (includeHeaders)
         {
             var articleResponse = _client.Article(new NntpMessageId(segmentId));
-            if (articleResponse?.Article?.Body == null) throw new UsenetArticleNotFoundException(segmentId);
+
+            // Throw exception if article not found, so multi-server failover works
+            if (articleResponse == null || !articleResponse.Success || articleResponse.Article?.Body == null)
+            {
+                throw new UsenetArticleNotFoundException(segmentId);
+            }
+
             return new UsenetArticle()
             {
                 Headers = new UsenetArticleHeaders(articleResponse.Article.Headers),
@@ -150,7 +162,13 @@ public class ThreadSafeNntpClient : INntpClient
         }
 
         var bodyResponse = _client.Body(new NntpMessageId(segmentId));
-        if (bodyResponse?.Article?.Body == null) throw new UsenetArticleNotFoundException(segmentId);
+
+        // Throw exception if article not found, so multi-server failover works
+        if (bodyResponse == null || !bodyResponse.Success || bodyResponse.Article?.Body == null)
+        {
+            throw new UsenetArticleNotFoundException(segmentId);
+        }
+
         return new UsenetArticle()
         {
             Headers = null,
