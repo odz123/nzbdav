@@ -14,7 +14,7 @@ public class NzbFileStream(
 {
     private long _position = 0;
     private CombinedStream? _innerStream;
-    private bool _disposed;
+    private int _disposed = 0;
 
     // Cache for segment seek results to avoid recalculating positions
     // Key: byte offset, Value: (segment index, segment byte range)
@@ -42,7 +42,13 @@ public class NzbFileStream(
     {
         var absoluteOffset = origin == SeekOrigin.Begin ? offset
             : origin == SeekOrigin.Current ? _position + offset
-            : throw new InvalidOperationException("SeekOrigin must be Begin or Current.");
+            : origin == SeekOrigin.End ? fileSize + offset
+            : throw new ArgumentException("Invalid SeekOrigin", nameof(origin));
+
+        // Validate bounds
+        if (absoluteOffset < 0 || absoluteOffset > fileSize)
+            throw new ArgumentOutOfRangeException(nameof(offset), "Seek position out of bounds");
+
         if (_position == absoluteOffset) return _position;
         _position = absoluteOffset;
         _innerStream?.Dispose();
@@ -130,16 +136,18 @@ public class NzbFileStream(
 
     protected override void Dispose(bool disposing)
     {
-        if (_disposed) return;
-        _innerStream?.Dispose();
-        _disposed = true;
+        if (Interlocked.CompareExchange(ref _disposed, 1, 0) == 1) return;
+        if (disposing)
+        {
+            _innerStream?.Dispose();
+        }
+        base.Dispose(disposing);
     }
 
     public override async ValueTask DisposeAsync()
     {
-        if (_disposed) return;
+        if (Interlocked.CompareExchange(ref _disposed, 1, 0) == 1) return;
         if (_innerStream != null) await _innerStream.DisposeAsync();
-        _disposed = true;
         GC.SuppressFinalize(this);
     }
 }

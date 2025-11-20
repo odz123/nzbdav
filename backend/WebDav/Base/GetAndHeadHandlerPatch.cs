@@ -120,6 +120,22 @@ public class GetAndHeadHandlerPatch : IRequestHandler
 
                             var start = range.Start ?? 0;
                             var end = Math.Min(range.End ?? long.MaxValue, length - 1);
+
+                            // Validate range is within bounds
+                            if (start < 0 || start > length - 1)
+                            {
+                                response.SetStatus((DavStatusCode)416);
+                                response.Headers.ContentRange = $"bytes */{stream.Length}";
+                                return true;
+                            }
+
+                            if (end < start)
+                            {
+                                response.SetStatus((DavStatusCode)416);
+                                response.Headers.ContentRange = $"bytes */{stream.Length}";
+                                return true;
+                            }
+
                             length = end - start + 1;
 
                             // Write the range

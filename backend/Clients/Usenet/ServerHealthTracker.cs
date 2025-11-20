@@ -19,20 +19,7 @@ public class ServerHealthTracker
         if (!_serverHealth.TryGetValue(serverId, out var health))
             return true; // Unknown servers are assumed healthy
 
-        // If circuit is open, check if timeout has elapsed
-        if (health.IsCircuitOpen)
-        {
-            if (DateTime.UtcNow - health.LastFailureTime > _circuitBreakerTimeout)
-            {
-                // Reset to half-open state
-                health.IsCircuitOpen = false;
-                health.ConsecutiveFailures = 0;
-                return true;
-            }
-            return false; // Circuit still open
-        }
-
-        return true;
+        return health.IsAvailable(_circuitBreakerTimeout);
     }
 
     /// <summary>
@@ -41,10 +28,7 @@ public class ServerHealthTracker
     public void RecordSuccess(string serverId)
     {
         var health = _serverHealth.GetOrAdd(serverId, _ => new ServerHealth());
-        health.ConsecutiveFailures = 0;
-        health.TotalSuccesses++;
-        health.LastSuccessTime = DateTime.UtcNow;
-        health.IsCircuitOpen = false;
+        health.RecordSuccessInternal();
     }
 
     /// <summary>
@@ -53,16 +37,7 @@ public class ServerHealthTracker
     public void RecordFailure(string serverId, Exception exception)
     {
         var health = _serverHealth.GetOrAdd(serverId, _ => new ServerHealth());
-        health.ConsecutiveFailures++;
-        health.TotalFailures++;
-        health.LastFailureTime = DateTime.UtcNow;
-        health.LastException = exception;
-
-        // Open circuit if threshold exceeded
-        if (health.ConsecutiveFailures >= _failureThreshold)
-        {
-            health.IsCircuitOpen = true;
-        }
+        health.RecordFailureInternal(exception, _failureThreshold);
     }
 
     /// <summary>
@@ -82,17 +57,7 @@ public class ServerHealthTracker
             };
         }
 
-        return new ServerHealthStats
-        {
-            ServerId = serverId,
-            IsAvailable = !health.IsCircuitOpen,
-            ConsecutiveFailures = health.ConsecutiveFailures,
-            TotalSuccesses = health.TotalSuccesses,
-            TotalFailures = health.TotalFailures,
-            LastSuccessTime = health.LastSuccessTime,
-            LastFailureTime = health.LastFailureTime,
-            LastException = health.LastException?.Message
-        };
+        return health.GetStats(serverId);
     }
 
     /// <summary>
@@ -121,13 +86,81 @@ public class ServerHealthTracker
 
     private class ServerHealth
     {
-        public int ConsecutiveFailures { get; set; }
-        public int TotalSuccesses { get; set; }
-        public int TotalFailures { get; set; }
-        public DateTime? LastSuccessTime { get; set; }
-        public DateTime? LastFailureTime { get; set; }
-        public Exception? LastException { get; set; }
-        public bool IsCircuitOpen { get; set; }
+        private readonly object _lock = new();
+        private int _consecutiveFailures;
+        private int _totalSuccesses;
+        private int _totalFailures;
+        private DateTime? _lastSuccessTime;
+        private DateTime? _lastFailureTime;
+        private Exception? _lastException;
+        private bool _isCircuitOpen;
+
+        public bool IsAvailable(TimeSpan circuitBreakerTimeout)
+        {
+            lock (_lock)
+            {
+                // If circuit is open, check if timeout has elapsed
+                if (_isCircuitOpen)
+                {
+                    if (DateTime.UtcNow - _lastFailureTime > circuitBreakerTimeout)
+                    {
+                        // Reset to half-open state
+                        _isCircuitOpen = false;
+                        _consecutiveFailures = 0;
+                        return true;
+                    }
+                    return false; // Circuit still open
+                }
+
+                return true;
+            }
+        }
+
+        public void RecordSuccessInternal()
+        {
+            lock (_lock)
+            {
+                _consecutiveFailures = 0;
+                _totalSuccesses++;
+                _lastSuccessTime = DateTime.UtcNow;
+                _isCircuitOpen = false;
+            }
+        }
+
+        public void RecordFailureInternal(Exception exception, int failureThreshold)
+        {
+            lock (_lock)
+            {
+                _consecutiveFailures++;
+                _totalFailures++;
+                _lastFailureTime = DateTime.UtcNow;
+                _lastException = exception;
+
+                // Open circuit if threshold exceeded
+                if (_consecutiveFailures >= failureThreshold)
+                {
+                    _isCircuitOpen = true;
+                }
+            }
+        }
+
+        public ServerHealthStats GetStats(string serverId)
+        {
+            lock (_lock)
+            {
+                return new ServerHealthStats
+                {
+                    ServerId = serverId,
+                    IsAvailable = !_isCircuitOpen,
+                    ConsecutiveFailures = _consecutiveFailures,
+                    TotalSuccesses = _totalSuccesses,
+                    TotalFailures = _totalFailures,
+                    LastSuccessTime = _lastSuccessTime,
+                    LastFailureTime = _lastFailureTime,
+                    LastException = _lastException?.Message
+                };
+            }
+        }
     }
 }
 
