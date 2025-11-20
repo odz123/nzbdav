@@ -101,7 +101,7 @@ public class ThreadSafeNntpClient : INntpClient
 
     public async Task<YencHeader> GetSegmentYencHeaderAsync(string segmentId, CancellationToken cancellationToken)
     {
-        await using var stream = await GetSegmentStreamAsync(new NntpMessageId(segmentId), false, cancellationToken);
+        await using var stream = await GetSegmentStreamAsync(segmentId, false, cancellationToken);
         return stream.Header;
     }
 

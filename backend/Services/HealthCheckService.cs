@@ -1,4 +1,5 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using NzbWebDAV.Clients.Usenet;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Config;
@@ -22,7 +23,8 @@ public class HealthCheckService
     private readonly WebsocketManager _websocketManager;
     private readonly CancellationToken _cancellationToken = SigtermUtil.GetCancellationToken();
 
-    private readonly HashSet<string> _missingSegmentIds = [];
+    // Cache for missing segment IDs with 24 hour TTL to allow recovery from temporary issues
+    private readonly IMemoryCache _missingSegmentCache;
 
     public HealthCheckService
     (
@@ -35,11 +37,17 @@ public class HealthCheckService
         _usenetClient = usenetClient;
         _websocketManager = websocketManager;
 
+        // Initialize missing segment cache with 10,000 entry limit
+        _missingSegmentCache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 10000 });
+
         _configManager.OnConfigChanged += (_, configEventArgs) =>
         {
-            // when usenet host changes, clear the missing segments cache
-            if (!configEventArgs.ChangedConfig.ContainsKey("usenet.host")) return;
-            lock (_missingSegmentIds) _missingSegmentIds.Clear();
+            // when any usenet server configuration changes, clear the missing segments cache
+            // this includes adding/removing/modifying servers in multi-server setup
+            if (!_configManager.HasUsenetConfigChanged(configEventArgs.ChangedConfig)) return;
+
+            // Clear cache by compacting and removing all entries
+            _missingSegmentCache.Compact(1.0);
         };
 
         _ = StartMonitoringService();
@@ -213,8 +221,14 @@ public class HealthCheckService
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|100");
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
             if (FilenameUtil.IsImportantFileType(davItem.Name))
-                lock (_missingSegmentIds)
-                    _missingSegmentIds.Add(e.SegmentId);
+            {
+                // Cache missing segment for 24 hours to prevent repeated failed downloads
+                _missingSegmentCache.Set(e.SegmentId, true, new MemoryCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24),
+                    Size = 1
+                });
+            }
 
             // when usenet article is missing, perform repairs
             await Repair(davItem, dbClient, ct);
@@ -400,11 +414,12 @@ public class HealthCheckService
 
     public void CheckCachedMissingSegmentIds(IEnumerable<string> segmentIds)
     {
-        lock (_missingSegmentIds)
+        foreach (var segmentId in segmentIds)
         {
-            foreach (var segmentId in segmentIds)
-                if (_missingSegmentIds.Contains(segmentId))
-                    throw new UsenetArticleNotFoundException(segmentId);
+            if (_missingSegmentCache.TryGetValue(segmentId, out _))
+            {
+                throw new UsenetArticleNotFoundException(segmentId);
+            }
         }
     }
 
