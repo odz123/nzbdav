@@ -230,6 +230,29 @@ public class ConfigManager
         return configValue != null && bool.TryParse(configValue, out var result) ? result : defaultValue;
     }
 
+    public bool IsHealthySegmentCacheEnabled()
+    {
+        var defaultValue = true;
+        var configValue = StringUtil.EmptyToNull(GetConfigValue("repair.cache-enabled"));
+        return configValue != null && bool.TryParse(configValue, out var result) ? result : defaultValue;
+    }
+
+    public TimeSpan GetHealthySegmentCacheTtl()
+    {
+        var value = StringUtil.EmptyToNull(GetConfigValue("repair.cache-ttl-hours")) ?? "24";
+        if (!int.TryParse(value, out var hours))
+            hours = 24;
+        return TimeSpan.FromHours(Math.Clamp(hours, 1, 168)); // 1 hour to 7 days
+    }
+
+    public int GetParallelHealthCheckCount()
+    {
+        var value = StringUtil.EmptyToNull(GetConfigValue("repair.parallel-files")) ?? "3";
+        if (!int.TryParse(value, out var count))
+            count = 3;
+        return Math.Clamp(count, 1, 10); // 1 to 10 files in parallel
+    }
+
     public ArrConfig GetArrConfig()
     {
         var defaultValue = new ArrConfig();

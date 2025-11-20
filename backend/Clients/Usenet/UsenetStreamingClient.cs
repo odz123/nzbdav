@@ -18,6 +18,7 @@ public class UsenetStreamingClient
     private readonly ServerHealthTracker _healthTracker;
     private readonly ConfigManager _configManager;
     private MultiServerNntpClient? _multiServerClient;
+    private readonly IMemoryCache _healthySegmentCache;
 
     public UsenetStreamingClient(
         ConfigManager configManager,
@@ -28,6 +29,9 @@ public class UsenetStreamingClient
         _websocketManager = websocketManager;
         _healthTracker = healthTracker;
         _configManager = configManager;
+
+        // initialize healthy segment cache (24 hour TTL, max 50,000 entries)
+        _healthySegmentCache = new MemoryCache(new MemoryCacheOptions() { SizeLimit = 50000 });
 
         // get server configurations
         var serverConfigs = configManager.GetUsenetServers();
@@ -48,6 +52,10 @@ public class UsenetStreamingClient
             // if unrelated config changed, do nothing
             if (!configManager.HasUsenetConfigChanged(configEventArgs.ChangedConfig))
                 return;
+
+            // clear healthy segment cache when usenet config changes
+            // MemoryCache doesn't have a Clear method, so we compact to remove expired items
+            _healthySegmentCache.Compact(1.0);
 
             // update server configurations
             var newServerConfigs = configManager.GetUsenetServers();
@@ -104,13 +112,23 @@ public class UsenetStreamingClient
             ? segmentList
             : GetStrategicSample(segmentList, samplingRate, minSegments);
 
-        var tasks = segmentsToCheck
+        // Filter out segments that are cached as healthy (if cache is enabled)
+        var isCacheEnabled = _configManager.IsHealthySegmentCacheEnabled();
+        var segmentsToActuallyCheck = isCacheEnabled
+            ? segmentsToCheck.Where(s => !IsSegmentCachedAsHealthy(s)).ToList()
+            : segmentsToCheck;
+
+        // If all segments are cached as healthy, we're done
+        if (segmentsToActuallyCheck.Count == 0)
+            return;
+
+        var tasks = segmentsToActuallyCheck
             .Select(async x => await CheckSegmentWithRetryAsync(x, token))
             .WithConcurrencyAsync(concurrency);
 
         var processed = 0;
         var consecutiveFailures = 0;
-        var totalChecked = segmentsToCheck.Count;
+        var totalChecked = segmentsToActuallyCheck.Count;
 
         await foreach (var task in tasks)
         {
@@ -130,6 +148,10 @@ public class UsenetStreamingClient
             else
             {
                 consecutiveFailures = 0;
+
+                // Cache successful segment checks (if cache is enabled)
+                if (isCacheEnabled)
+                    CacheHealthySegment(task.SegmentId);
             }
 
             // If any single segment fails (and we haven't hit consecutive threshold), still fail
@@ -289,6 +311,21 @@ public class UsenetStreamingClient
     public IReadOnlyList<UsenetServerConfig> GetServerConfigs()
     {
         return _multiServerClient?.GetServerConfigs() ?? Array.Empty<UsenetServerConfig>();
+    }
+
+    private bool IsSegmentCachedAsHealthy(string segmentId)
+    {
+        return _healthySegmentCache.TryGetValue(segmentId, out _);
+    }
+
+    private void CacheHealthySegment(string segmentId)
+    {
+        var cacheTtl = _configManager.GetHealthySegmentCacheTtl();
+        _healthySegmentCache.Set(segmentId, true, new MemoryCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = cacheTtl,
+            Size = 1 // Each entry counts as 1 toward the size limit
+        });
     }
 
     public static async ValueTask<INntpClient> CreateNewConnection

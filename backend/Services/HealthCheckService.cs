@@ -64,23 +64,40 @@ public class HealthCheckService
                 var reservedConnections = _configManager.GetMaxConnections() - maxRepairConnections;
                 using var _ = cts.Token.SetScopedContext(new ReservedConnectionsContext(reservedConnections));
 
-                // get the davItem to health-check
+                // get multiple davItems to health-check in parallel
+                var parallelCount = _configManager.GetParallelHealthCheckCount();
                 await using var dbContext = new DavDatabaseContext();
                 var dbClient = new DavDatabaseClient(dbContext);
                 var currentDateTime = DateTimeOffset.UtcNow;
-                var davItem = await GetHealthCheckQueueItems(dbClient)
+                var davItems = await GetHealthCheckQueueItems(dbClient)
                     .Where(x => x.NextHealthCheck == null || x.NextHealthCheck < currentDateTime)
-                    .FirstOrDefaultAsync(cts.Token);
+                    .Take(parallelCount)
+                    .ToListAsync(cts.Token);
 
-                // if there is no item to health-check, don't do anything
-                if (davItem == null)
+                // if there are no items to health-check, don't do anything
+                if (davItems.Count == 0)
                 {
                     await Task.Delay(TimeSpan.FromSeconds(5), cts.Token);
                     continue;
                 }
 
-                // perform the health check
-                await PerformHealthCheck(davItem, dbClient, maxRepairConnections, cts.Token);
+                // perform health checks in parallel
+                var connectionsPerFile = maxRepairConnections / davItems.Count;
+                var tasks = davItems.Select(davItem =>
+                {
+                    // Each file gets its own database context to avoid concurrency issues
+                    return Task.Run(async () =>
+                    {
+                        await using var itemDbContext = new DavDatabaseContext();
+                        var itemDbClient = new DavDatabaseClient(itemDbContext);
+                        // Re-fetch the item to avoid tracking conflicts
+                        var item = await itemDbClient.Ctx.Items.FindAsync(new object[] { davItem.Id }, cts.Token);
+                        if (item != null)
+                            await PerformHealthCheck(item, itemDbClient, connectionsPerFile, cts.Token);
+                    }, cts.Token);
+                });
+
+                await Task.WhenAll(tasks);
             }
             catch (Exception e)
             {
