@@ -1,5 +1,6 @@
 ﻿using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Exceptions;
 using NzbWebDAV.Streams;
 using NzbWebDAV.Utils;
 using Usenet.Exceptions;
@@ -89,7 +90,7 @@ public class MultiConnectionNntpClient(ConnectionPool<INntpClient> connectionPoo
                 .ContinueWith(_ => connectionLock.Dispose());
             return result;
         }
-        catch (NntpException e)
+        catch (NntpException originalException)
         {
             // we want to replace the underlying connection in cases of NntpExceptions.
             connectionLock.Replace();
@@ -97,7 +98,26 @@ public class MultiConnectionNntpClient(ConnectionPool<INntpClient> connectionPoo
 
             // and try again with a new connection (max 1 retry)
             if (retries > 0)
-                return await RunWithConnection<T>(task, cancellationToken, retries - 1);
+            {
+                try
+                {
+                    return await RunWithConnection<T>(task, cancellationToken, retries - 1);
+                }
+                catch (Exception retryException)
+                {
+                    // If the retry fails due to connection issues (like authentication failure),
+                    // prioritize the original operation error over the connection error.
+                    // This prevents misleading "Could not login" errors when the real issue
+                    // is an operational error like article not found.
+                    if (retryException is RetryableDownloadException)
+                    {
+                        throw originalException;
+                    }
+
+                    // For other exceptions, throw the retry exception as it's more relevant
+                    throw;
+                }
+            }
 
             throw;
         }
