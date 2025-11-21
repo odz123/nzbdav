@@ -114,6 +114,31 @@ public class ConfigManager
         return int.TryParse(value, out var result) ? result : 50;
     }
 
+    /// <summary>
+    /// Get total max connections across all configured Usenet servers
+    /// In multi-server setup, this returns the sum of all server maxConnections
+    /// In single-server setup, this returns the same as GetMaxConnections()
+    /// </summary>
+    public int GetTotalMaxConnections()
+    {
+        try
+        {
+            var servers = GetUsenetServers();
+            if (servers.Count == 0)
+            {
+                // Fallback to legacy config if no servers configured
+                return GetMaxConnections();
+            }
+
+            return servers.Sum(s => s.MaxConnections);
+        }
+        catch
+        {
+            // If GetUsenetServers() throws (no config), fallback to GetMaxConnections()
+            return GetMaxConnections();
+        }
+    }
+
     public int GetConnectionsPerStream()
     {
         var value = StringUtil.EmptyToNull(GetConfigValue("usenet.connections-per-stream"))

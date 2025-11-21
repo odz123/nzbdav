@@ -108,7 +108,8 @@ public class QueueItemProcessor(
         }
 
         // ensure we don't use more than max-queue-connections
-        var reservedConnections = configManager.GetMaxConnections() - configManager.GetMaxQueueConnections();
+        // Use total connections across all servers for multi-server compatibility
+        var reservedConnections = configManager.GetTotalMaxConnections() - configManager.GetMaxQueueConnections();
         using var _ = ct.SetScopedContext(new ReservedConnectionsContext(reservedConnections));
 
         // read the nzb document
