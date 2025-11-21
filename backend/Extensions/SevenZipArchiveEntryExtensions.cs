@@ -36,9 +36,19 @@ public static class SevenZipArchiveEntryExtensions
         var filePart = entry?.GetReflectionProperty("FilePart");
         var folder = filePart?.GetReflectionProperty("Folder");
         var database = filePart?.GetReflectionField("_database");
-        var folderFirstPackStreamId = (int)folder?.GetReflectionField("_firstPackStreamId")!;
-        var databaseDataStartPosition = (long)database?.GetReflectionField("_dataStartPosition")!;
-        var databasePackStreamStartPositions = (List<long>)database?.GetReflectionField("_packStreamStartPositions")!;
+
+        var firstPackStreamIdField = folder?.GetReflectionField("_firstPackStreamId");
+        if (firstPackStreamIdField is not int folderFirstPackStreamId)
+            throw new InvalidOperationException("Failed to extract 7zip entry metadata: _firstPackStreamId not found or wrong type");
+
+        var dataStartPosField = database?.GetReflectionField("_dataStartPosition");
+        if (dataStartPosField is not long databaseDataStartPosition)
+            throw new InvalidOperationException("Failed to extract 7zip entry metadata: _dataStartPosition not found or wrong type");
+
+        var packStreamStartPosField = database?.GetReflectionField("_packStreamStartPositions");
+        if (packStreamStartPosField is not List<long> databasePackStreamStartPositions)
+            throw new InvalidOperationException("Failed to extract 7zip entry metadata: _packStreamStartPositions not found or wrong type");
+
         return databaseDataStartPosition + databasePackStreamStartPositions[folderFirstPackStreamId];
     }
 
