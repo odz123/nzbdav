@@ -19,6 +19,13 @@ public class MultiServerNntpClient : INntpClient
     private readonly ServerHealthTracker _healthTracker;
     private readonly ILogger<MultiServerNntpClient>? _logger;
     private readonly SemaphoreSlim _updateLock = new(1, 1);
+    private readonly Dictionary<string, ServerConnectionStats> _serverStats = new();
+    private readonly object _statsLock = new();
+
+    /// <summary>
+    /// Event fired when the aggregate connection pool stats change across all servers
+    /// </summary>
+    public event EventHandler<AggregateConnectionPoolChangedEventArgs>? OnAggregateConnectionPoolChanged;
 
     public MultiServerNntpClient(
         IEnumerable<UsenetServerConfig> serverConfigs,
@@ -48,9 +55,29 @@ public class MultiServerNntpClient : INntpClient
         {
             var serverInstance = CreateServerInstance(config);
             _servers.Add(serverInstance);
+
+            // Initialize stats for this server
+            lock (_statsLock)
+            {
+                _serverStats[config.Id] = new ServerConnectionStats
+                {
+                    Live = 0,
+                    Idle = 0,
+                    Max = config.MaxConnections
+                };
+            }
+
             _logger?.LogInformation(
                 "Initialized server: {Name} ({Host}:{Port}) with {Connections} connections at priority {Priority}",
                 config.Name, config.Host, config.Port, config.MaxConnections, config.Priority);
+        }
+
+        // Fire initial aggregate event with all zeros except max
+        lock (_statsLock)
+        {
+            var totalMax = _serverStats.Values.Sum(s => s.Max);
+            OnAggregateConnectionPoolChanged?.Invoke(this, new AggregateConnectionPoolChangedEventArgs(
+                0, 0, totalMax));
         }
     }
 
@@ -60,13 +87,17 @@ public class MultiServerNntpClient : INntpClient
         if (string.IsNullOrWhiteSpace(config.Host))
             throw new InvalidOperationException(
                 $"Server '{config.Name}' (ID: {config.Id}) has an empty hostname. Please configure a valid hostname.");
-        
+
         var createConnection = (CancellationToken ct) =>
             UsenetStreamingClient.CreateNewConnection(
                 config.Host, config.Port, config.UseSsl,
                 config.Username, config.Password, ct);
 
         var connectionPool = new ConnectionPool<INntpClient>(config.MaxConnections, createConnection);
+
+        // Subscribe to connection pool events to aggregate stats across all servers
+        connectionPool.OnConnectionPoolChanged += OnServerConnectionPoolChanged;
+
         var multiConnectionClient = new MultiConnectionNntpClient(connectionPool);
 
         return new ServerInstance
@@ -75,6 +106,49 @@ public class MultiServerNntpClient : INntpClient
             Client = multiConnectionClient,
             ConnectionPool = connectionPool
         };
+    }
+
+    /// <summary>
+    /// Handle connection pool changes from individual servers and fire aggregate event
+    /// </summary>
+    private void OnServerConnectionPoolChanged(object? sender, ConnectionPool<INntpClient>.ConnectionPoolChangedEventArgs args)
+    {
+        // Find which server this event came from
+        ServerInstance? sourceServer = null;
+        lock (_servers)
+        {
+            sourceServer = _servers.FirstOrDefault(s => ReferenceEquals(s.ConnectionPool, sender));
+        }
+
+        if (sourceServer == null)
+            return; // Event from a disposed server
+
+        // Update the stats for this specific server
+        lock (_statsLock)
+        {
+            _serverStats[sourceServer.Config.Id] = new ServerConnectionStats
+            {
+                Live = args.Live,
+                Idle = args.Idle,
+                Max = args.Max
+            };
+
+            // Calculate aggregate stats across all servers
+            var totalLive = _serverStats.Values.Sum(s => s.Live);
+            var totalIdle = _serverStats.Values.Sum(s => s.Idle);
+            var totalMax = _serverStats.Values.Sum(s => s.Max);
+
+            // Fire aggregate event
+            OnAggregateConnectionPoolChanged?.Invoke(this, new AggregateConnectionPoolChangedEventArgs(
+                totalLive, totalIdle, totalMax));
+        }
+    }
+
+    private class ServerConnectionStats
+    {
+        public int Live { get; init; }
+        public int Idle { get; init; }
+        public int Max { get; init; }
     }
 
     public Task<bool> ConnectAsync(string host, int port, bool useSsl, CancellationToken cancellationToken)
@@ -387,6 +461,12 @@ public class MultiServerNntpClient : INntpClient
             var oldServers = _servers.ToList();
             _servers.Clear();
 
+            // Clear old stats
+            lock (_statsLock)
+            {
+                _serverStats.Clear();
+            }
+
             InitializeServers(newServerConfigs);
 
             // Dispose old connection pools
@@ -394,6 +474,8 @@ public class MultiServerNntpClient : INntpClient
             {
                 try
                 {
+                    // Unsubscribe from events before disposing
+                    oldServer.ConnectionPool.OnConnectionPoolChanged -= OnServerConnectionPoolChanged;
                     oldServer.Client.Dispose();
                 }
                 catch (Exception ex)
@@ -430,6 +512,8 @@ public class MultiServerNntpClient : INntpClient
     {
         foreach (var server in _servers)
         {
+            // Unsubscribe from connection pool events before disposing
+            server.ConnectionPool.OnConnectionPoolChanged -= OnServerConnectionPoolChanged;
             server.Client.Dispose();
         }
         _servers.Clear();
@@ -442,5 +526,23 @@ public class MultiServerNntpClient : INntpClient
         public required UsenetServerConfig Config { get; init; }
         public required MultiConnectionNntpClient Client { get; init; }
         public required ConnectionPool<INntpClient> ConnectionPool { get; init; }
+    }
+
+    /// <summary>
+    /// Event args for aggregate connection pool statistics across all servers
+    /// </summary>
+    public class AggregateConnectionPoolChangedEventArgs : EventArgs
+    {
+        public int Live { get; }
+        public int Idle { get; }
+        public int Max { get; }
+        public int Active => Live - Idle;
+
+        public AggregateConnectionPoolChangedEventArgs(int live, int idle, int max)
+        {
+            Live = live;
+            Idle = idle;
+            Max = max;
+        }
     }
 }

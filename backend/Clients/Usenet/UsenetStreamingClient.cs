@@ -43,12 +43,12 @@ public class UsenetStreamingClient
         // initialize the multi-server client
         _multiServerClient = new MultiServerNntpClient(serverConfigs, _healthTracker, _logger);
 
+        // Subscribe to aggregate connection pool events from multi-server client
+        _multiServerClient.OnAggregateConnectionPoolChanged += OnConnectionPoolChanged;
+
         // wrap with caching
         var cache = new MemoryCache(new MemoryCacheOptions() { SizeLimit = 8192 });
         _client = new CachingNntpClient(_multiServerClient, cache);
-
-        // setup connection pool monitoring for all servers
-        SetupConnectionPoolMonitoring(serverConfigs);
 
         // when config changes, update the servers
         configManager.OnConfigChanged += async (_, configEventArgs) =>
@@ -68,22 +68,19 @@ public class UsenetStreamingClient
             if (_multiServerClient != null)
             {
                 await _multiServerClient.UpdateServersAsync(newServerConfigs);
-                SetupConnectionPoolMonitoring(newServerConfigs);
+                // No need to call SetupConnectionPoolMonitoring - the event is already subscribed
+                // and InitializeServers in MultiServerNntpClient will fire the initial event
             }
         };
     }
 
-    private void SetupConnectionPoolMonitoring(List<UsenetServerConfig> serverConfigs)
+    /// <summary>
+    /// Handle connection pool changes and send websocket updates
+    /// </summary>
+    private void OnConnectionPoolChanged(object? sender, MultiServerNntpClient.AggregateConnectionPoolChangedEventArgs args)
     {
-        // Calculate total connections across all servers
-        var totalConnections = serverConfigs.Sum(s => s.MaxConnections);
-
-        // Send initial websocket update
-        var message = $"0|{totalConnections}|0";
+        var message = $"{args.Live}|{args.Max}|{args.Idle}";
         _websocketManager.SendMessage(WebsocketTopic.UsenetConnections, message);
-
-        // Note: Individual connection pool monitoring is handled by MultiServerNntpClient
-        // This provides an aggregate view across all servers
     }
 
     public Task CheckAllSegmentsAsync
