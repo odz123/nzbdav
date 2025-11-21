@@ -58,15 +58,38 @@ public class ThreadSafeNntpClient : INntpClient
     {
         return Synchronized(() =>
         {
-            var headResponse = _client.Head(new NntpMessageId(segmentId));
-
-            // Throw exception if article not found, so multi-server failover works
-            if (headResponse == null || !headResponse.Success || headResponse.Article?.Headers == null)
+            try
             {
-                throw new UsenetArticleNotFoundException(segmentId);
-            }
+                var headResponse = _client.Head(new NntpMessageId(segmentId));
 
-            return new UsenetArticleHeaders(headResponse.Article.Headers);
+                // Throw exception if article not found, so multi-server failover works
+                if (headResponse == null || !headResponse.Success || headResponse.Article?.Headers == null)
+                {
+                    throw new UsenetArticleNotFoundException(segmentId);
+                }
+
+                return new UsenetArticleHeaders(headResponse.Article.Headers);
+            }
+            catch (UsenetArticleNotFoundException)
+            {
+                // Article definitely not found - rethrow as-is for multi-server failover
+                throw;
+            }
+            catch (Usenet.Exceptions.NntpException ex)
+            {
+                // Check if this is an "article not found" error based on common NNTP error messages
+                var message = ex.Message?.ToLowerInvariant() ?? "";
+                if (message.Contains("no article") ||
+                    message.Contains("article not found") ||
+                    message.Contains("423") ||  // NNTP 423: No article with that number
+                    message.Contains("430"))    // NNTP 430: No article with that message-id
+                {
+                    throw new UsenetArticleNotFoundException(segmentId);
+                }
+
+                // For other NNTP errors, rethrow so they can be handled by retry logic
+                throw;
+            }
         }, cancellationToken);
     }
 
@@ -146,34 +169,80 @@ public class ThreadSafeNntpClient : INntpClient
     {
         if (includeHeaders)
         {
-            var articleResponse = _client.Article(new NntpMessageId(segmentId));
+            try
+            {
+                var articleResponse = _client.Article(new NntpMessageId(segmentId));
+
+                // Throw exception if article not found, so multi-server failover works
+                if (articleResponse == null || !articleResponse.Success || articleResponse.Article?.Body == null)
+                {
+                    throw new UsenetArticleNotFoundException(segmentId);
+                }
+
+                return new UsenetArticle()
+                {
+                    Headers = new UsenetArticleHeaders(articleResponse.Article.Headers),
+                    Body = articleResponse.Article.Body
+                };
+            }
+            catch (UsenetArticleNotFoundException)
+            {
+                // Article definitely not found - rethrow as-is for multi-server failover
+                throw;
+            }
+            catch (Usenet.Exceptions.NntpException ex)
+            {
+                // Check if this is an "article not found" error based on common NNTP error messages
+                var message = ex.Message?.ToLowerInvariant() ?? "";
+                if (message.Contains("no article") ||
+                    message.Contains("article not found") ||
+                    message.Contains("423") ||  // NNTP 423: No article with that number
+                    message.Contains("430"))    // NNTP 430: No article with that message-id
+                {
+                    throw new UsenetArticleNotFoundException(segmentId);
+                }
+
+                // For other NNTP errors, rethrow so they can be handled by retry logic
+                throw;
+            }
+        }
+
+        try
+        {
+            var bodyResponse = _client.Body(new NntpMessageId(segmentId));
 
             // Throw exception if article not found, so multi-server failover works
-            if (articleResponse == null || !articleResponse.Success || articleResponse.Article?.Body == null)
+            if (bodyResponse == null || !bodyResponse.Success || bodyResponse.Article?.Body == null)
             {
                 throw new UsenetArticleNotFoundException(segmentId);
             }
 
             return new UsenetArticle()
             {
-                Headers = new UsenetArticleHeaders(articleResponse.Article.Headers),
-                Body = articleResponse.Article.Body
+                Headers = null,
+                Body = bodyResponse.Article.Body
             };
         }
-
-        var bodyResponse = _client.Body(new NntpMessageId(segmentId));
-
-        // Throw exception if article not found, so multi-server failover works
-        if (bodyResponse == null || !bodyResponse.Success || bodyResponse.Article?.Body == null)
+        catch (UsenetArticleNotFoundException)
         {
-            throw new UsenetArticleNotFoundException(segmentId);
+            // Article definitely not found - rethrow as-is for multi-server failover
+            throw;
         }
-
-        return new UsenetArticle()
+        catch (Usenet.Exceptions.NntpException ex)
         {
-            Headers = null,
-            Body = bodyResponse.Article.Body
-        };
+            // Check if this is an "article not found" error based on common NNTP error messages
+            var message = ex.Message?.ToLowerInvariant() ?? "";
+            if (message.Contains("no article") ||
+                message.Contains("article not found") ||
+                message.Contains("423") ||  // NNTP 423: No article with that number
+                message.Contains("430"))    // NNTP 430: No article with that message-id
+            {
+                throw new UsenetArticleNotFoundException(segmentId);
+            }
+
+            // For other NNTP errors, rethrow so they can be handled by retry logic
+            throw;
+        }
     }
 
     public void Dispose()
