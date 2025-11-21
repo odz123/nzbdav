@@ -109,8 +109,8 @@ public class RemoveUnlinkedFilesTask(
         removedItems.Add(item.Id);
 
         // remove the parent directory, if it is empty.
-        if (item.Parent!.Children.All(x => removedItems.Contains(x.Id)))
-            RemoveItem(item.Parent!, removedItems);
+        if (item.Parent != null && item.Parent.Children.All(x => removedItems.Contains(x.Id)))
+            RemoveItem(item.Parent, removedItems);
     }
 
     private HashSet<Guid> GetLinkedIds()

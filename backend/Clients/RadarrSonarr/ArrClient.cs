@@ -59,14 +59,16 @@ public class ArrClient(string host, string apiKey)
     protected async Task<T> GetRoot<T>(string rootPath)
     {
         await using var response = await _httpClient.GetStreamAsync($"{Host}{rootPath}");
-        return await JsonSerializer.DeserializeAsync<T>(response) ?? throw new NullReferenceException();
+        return await JsonSerializer.DeserializeAsync<T>(response)
+            ?? throw new InvalidOperationException($"Failed to deserialize response from {rootPath} as {typeof(T).Name}");
     }
 
     protected async Task<T> Post<T>(string path, object body)
     {
         using var response = await _httpClient.PostAsJsonAsync(GetRequestUri(path), body);
         await using var stream = await response.Content.ReadAsStreamAsync();
-        return await JsonSerializer.DeserializeAsync<T>(stream) ?? throw new NullReferenceException();
+        return await JsonSerializer.DeserializeAsync<T>(stream)
+            ?? throw new InvalidOperationException($"Failed to deserialize response from {path} as {typeof(T).Name}");
     }
 
     protected async Task<HttpStatusCode> Delete(string path, Dictionary<string, string>? queryParams = null)

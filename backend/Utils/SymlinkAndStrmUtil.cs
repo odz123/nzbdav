@@ -79,8 +79,21 @@ public static class SymlinkAndStrmUtil
 
     public static ISymlinkOrStrmInfo? GetSymlinkOrStrmInfo(FileInfo x)
     {
-        return IsStrm(x) ? new StrmInfo() { StrmPath = x.FullName, TargetUrl = File.ReadAllText(x.FullName) }
-            : IsSymLink(x) ? new SymlinkInfo() { SymlinkPath = x.FullName, TargetPath = x.LinkTarget! }
+        if (IsStrm(x))
+        {
+            try
+            {
+                var content = File.ReadAllText(x.FullName);
+                return new StrmInfo() { StrmPath = x.FullName, TargetUrl = content };
+            }
+            catch (Exception)
+            {
+                // If we can't read the strm file, skip it
+                return null;
+            }
+        }
+
+        return IsSymLink(x) ? new SymlinkInfo() { SymlinkPath = x.FullName, TargetPath = x.LinkTarget! }
             : null;
     }
 
