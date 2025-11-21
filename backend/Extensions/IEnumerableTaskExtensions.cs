@@ -51,13 +51,30 @@ public static class IEnumerableTaskExtensions
         }
         finally
         {
+            // Clean up any tasks that weren't yielded to the caller
             while (runningTasks.Count > 0)
             {
-                runningTasks.Dequeue().ContinueWith(x =>
+                var task = runningTasks.Dequeue();
+                try
                 {
-                    if (x.Status == TaskStatus.RanToCompletion)
-                        x.Result.Dispose();
-                });
+                    // Wait for task to complete with timeout to prevent hanging
+                    // This is a synchronous wait in finally block to ensure cleanup completes
+                    task.Wait(TimeSpan.FromSeconds(5));
+
+                    // Dispose result if task completed successfully
+                    if (task.Status == TaskStatus.RanToCompletion && task.Result != null)
+                    {
+                        task.Result.Dispose();
+                    }
+                    // If task faulted or was canceled, exception is observed by Wait()
+                }
+                catch (Exception)
+                {
+                    // Swallow all exceptions during cleanup:
+                    // - Task exceptions (faulted/canceled) - already logged elsewhere
+                    // - Disposal exceptions - best effort cleanup
+                    // - Timeout exceptions - prevent hanging indefinitely
+                }
             }
         }
     }

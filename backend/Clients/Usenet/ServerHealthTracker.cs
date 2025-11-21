@@ -12,6 +12,16 @@ public class ServerHealthTracker
     private readonly int _failureThreshold = 5;
 
     /// <summary>
+    /// Event fired when a server's circuit breaker opens (server becomes unavailable)
+    /// </summary>
+    public event EventHandler<ServerUnavailableEventArgs>? OnServerUnavailable;
+
+    /// <summary>
+    /// Event fired when all server health tracking is reset
+    /// </summary>
+    public event EventHandler? OnAllServersHealthReset;
+
+    /// <summary>
     /// Check if a server is available for use
     /// </summary>
     public bool IsServerAvailable(string serverId)
@@ -37,7 +47,13 @@ public class ServerHealthTracker
     public void RecordFailure(string serverId, Exception exception)
     {
         var health = _serverHealth.GetOrAdd(serverId, _ => new ServerHealth());
-        health.RecordFailureInternal(exception, _failureThreshold);
+        var circuitOpened = health.RecordFailureInternal(exception, _failureThreshold);
+
+        // Fire event if circuit breaker just opened
+        if (circuitOpened)
+        {
+            OnServerUnavailable?.Invoke(this, new ServerUnavailableEventArgs { ServerId = serverId });
+        }
     }
 
     /// <summary>
@@ -82,6 +98,9 @@ public class ServerHealthTracker
     public void ResetAllServerHealth()
     {
         _serverHealth.Clear();
+
+        // BUG FIX #3: Fire event to notify listeners (e.g., clear segment cache)
+        OnAllServersHealthReset?.Invoke(this, EventArgs.Empty);
     }
 
     private class ServerHealth
@@ -133,10 +152,12 @@ public class ServerHealthTracker
             }
         }
 
-        public void RecordFailureInternal(Exception exception, int failureThreshold)
+        public bool RecordFailureInternal(Exception exception, int failureThreshold)
         {
             lock (_lock)
             {
+                var wasOpen = _circuitState == CircuitState.Open;
+
                 _consecutiveFailures++;
                 _totalFailures++;
                 _lastFailureTime = DateTime.UtcNow;
@@ -152,6 +173,9 @@ public class ServerHealthTracker
                 {
                     _circuitState = CircuitState.Open;
                 }
+
+                // Return true if circuit just transitioned to Open
+                return !wasOpen && _circuitState == CircuitState.Open;
             }
         }
 
@@ -210,4 +234,12 @@ public class ServerHealthStats
     public DateTime? LastSuccessTime { get; set; }
     public DateTime? LastFailureTime { get; set; }
     public string? LastException { get; set; }
+}
+
+/// <summary>
+/// Event args for when a server becomes unavailable
+/// </summary>
+public class ServerUnavailableEventArgs : EventArgs
+{
+    public required string ServerId { get; init; }
 }

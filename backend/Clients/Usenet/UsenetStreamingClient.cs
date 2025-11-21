@@ -46,6 +46,14 @@ public class UsenetStreamingClient
         // Subscribe to aggregate connection pool events from multi-server client
         _multiServerClient.OnAggregateConnectionPoolChanged += OnConnectionPoolChanged;
 
+        // Subscribe to server unavailable events to invalidate segment cache
+        // BUG FIX #2: Clear segment cache when circuit breaker opens
+        _healthTracker.OnServerUnavailable += OnServerUnavailable;
+
+        // Subscribe to health reset events to invalidate segment cache
+        // BUG FIX #3: Clear segment cache when all health is reset
+        _healthTracker.OnAllServersHealthReset += OnAllServersHealthReset;
+
         // wrap with caching
         var cache = new MemoryCache(new MemoryCacheOptions() { SizeLimit = 8192 });
         _client = new CachingNntpClient(_multiServerClient, cache);
@@ -57,13 +65,9 @@ public class UsenetStreamingClient
             if (!configManager.HasUsenetConfigChanged(configEventArgs.ChangedConfig))
                 return;
 
-            // clear healthy segment cache when usenet config changes
-            // Dispose old cache and create new one to ensure ALL entries are cleared
-            var oldCache = _healthySegmentCache;
-            _healthySegmentCache = new MemoryCache(new MemoryCacheOptions() { SizeLimit = 50000 });
-            oldCache.Dispose();
-
             // update server configurations
+            // Note: UpdateServersAsync will call ResetAllServerHealth which fires
+            // OnAllServersHealthReset event, which will clear the segment cache
             var newServerConfigs = configManager.GetUsenetServers();
             if (_multiServerClient != null)
             {
@@ -81,6 +85,42 @@ public class UsenetStreamingClient
     {
         var message = $"{args.Live}|{args.Max}|{args.Idle}";
         _websocketManager.SendMessage(WebsocketTopic.UsenetConnections, message);
+    }
+
+    /// <summary>
+    /// Handle server becoming unavailable and clear segment cache
+    /// BUG FIX #2: When a circuit breaker opens, invalidate the segment cache
+    /// because cached segments might only exist on the now-unavailable server
+    /// </summary>
+    private void OnServerUnavailable(object? sender, ServerUnavailableEventArgs args)
+    {
+        Serilog.Log.Warning(
+            "Server {ServerId} circuit breaker opened - clearing segment cache to ensure accurate health checks",
+            args.ServerId);
+
+        ClearSegmentCache();
+    }
+
+    /// <summary>
+    /// Handle all servers health being reset and clear segment cache
+    /// BUG FIX #3: When health tracking is reset, invalidate the segment cache
+    /// to ensure fresh health checks after server reconfiguration
+    /// </summary>
+    private void OnAllServersHealthReset(object? sender, EventArgs args)
+    {
+        Serilog.Log.Information("All server health reset - clearing segment cache");
+        ClearSegmentCache();
+    }
+
+    /// <summary>
+    /// Clear the segment cache by disposing and recreating it
+    /// </summary>
+    private void ClearSegmentCache()
+    {
+        // Dispose old cache and create new one to ensure ALL entries are cleared
+        var oldCache = _healthySegmentCache;
+        _healthySegmentCache = new MemoryCache(new MemoryCacheOptions() { SizeLimit = 50000 });
+        oldCache.Dispose();
     }
 
     public Task CheckAllSegmentsAsync
