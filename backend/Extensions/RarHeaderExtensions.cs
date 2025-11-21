@@ -112,54 +112,92 @@ public static class RarHeaderExtensions
             rawPassword[i + rawLength] = salt[i];
         }
 
-        var msgDigest = SHA1.Create();
-        const int noOfRounds = (1 << 18);
+        const int noOfRounds = (1 << 18); // 262,144
         const int iblock = 3;
 
-        byte[] digest;
-        var data = new byte[(rawPassword.Length + iblock) * noOfRounds];
+        // Optimized implementation using IncrementalHash to avoid large array allocation
+        // We need 16 hashes for IV computation (every 16,384 iterations) + 1 final hash
+        var ivCheckpointInterval = noOfRounds / sizeInitV; // 16,384
 
-        //TODO slow code below, find ways to optimize
-        for (var i = 0; i < noOfRounds; i++)
+        // Create hash instances: 16 for IV values + 1 for the final key
+        using var finalHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
+        var ivHashes = new IncrementalHash[sizeInitV];
+        for (var i = 0; i < sizeInitV; i++)
         {
-            rawPassword.CopyTo(data, i * (rawPassword.Length + iblock));
-
-            data[(i * (rawPassword.Length + iblock)) + rawPassword.Length + 0] = (byte)i;
-            data[(i * (rawPassword.Length + iblock)) + rawPassword.Length + 1] = (byte)(i >> 8);
-            data[(i * (rawPassword.Length + iblock)) + rawPassword.Length + 2] = (byte)(i >> 16);
-
-            if (i % (noOfRounds / sizeInitV) == 0)
-            {
-                digest = msgDigest.ComputeHash(data, 0, (i + 1) * (rawPassword.Length + iblock));
-                aesIV[i / (noOfRounds / sizeInitV)] = digest[19];
-            }
+            ivHashes[i] = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
         }
 
-        digest = msgDigest.ComputeHash(data);
-        //slow code ends
-
-        var aesKey = new byte[sizeInitV];
-        for (var i = 0; i < 4; i++)
+        try
         {
-            for (var j = 0; j < 4; j++)
+            // Pre-allocate buffer for each block (rawPassword + 3 counter bytes)
+            Span<byte> block = stackalloc byte[rawPassword.Length + iblock];
+
+            for (var i = 0; i < noOfRounds; i++)
             {
-                aesKey[(i * 4) + j] = (byte)(
-                    (
-                        ((digest[i * 4] * 0x1000000) & 0xff000000)
-                        | (uint)((digest[(i * 4) + 1] * 0x10000) & 0xff0000)
-                        | (uint)((digest[(i * 4) + 2] * 0x100) & 0xff00)
-                        | (uint)(digest[(i * 4) + 3] & 0xff)
-                    ) >> (j * 8)
-                );
+                // Build the block: rawPassword + 3-byte counter
+                rawPassword.AsSpan().CopyTo(block);
+                block[rawPassword.Length + 0] = (byte)i;
+                block[rawPassword.Length + 1] = (byte)(i >> 8);
+                block[rawPassword.Length + 2] = (byte)(i >> 16);
+
+                // Feed block to final hash (all blocks)
+                finalHash.AppendData(block);
+
+                // Feed block to all IV hashes that are still accumulating
+                // Original logic: checkpoint triggers when i % ivCheckpointInterval == 0
+                // At that point, hash all blocks from 0 to i (inclusive)
+                for (var ivIdx = 0; ivIdx < sizeInitV; ivIdx++)
+                {
+                    var checkpointIteration = ivIdx * ivCheckpointInterval;
+                    // Feed this block if we haven't reached the checkpoint yet, or if this IS the checkpoint
+                    if (i <= checkpointIteration)
+                    {
+                        ivHashes[ivIdx].AppendData(block);
+
+                        // If this iteration IS the checkpoint, finalize the hash
+                        if (i == checkpointIteration)
+                        {
+                            var ivDigest = ivHashes[ivIdx].GetHashAndReset();
+                            aesIV[ivIdx] = ivDigest[19];
+                        }
+                    }
+                }
+            }
+
+            // Get final hash for key derivation
+            var digest = finalHash.GetHashAndReset();
+
+            var aesKey = new byte[sizeInitV];
+            for (var i = 0; i < 4; i++)
+            {
+                for (var j = 0; j < 4; j++)
+                {
+                    aesKey[(i * 4) + j] = (byte)(
+                        (
+                            ((digest[i * 4] * 0x1000000) & 0xff000000)
+                            | (uint)((digest[(i * 4) + 1] * 0x10000) & 0xff0000)
+                            | (uint)((digest[(i * 4) + 2] * 0x100) & 0xff00)
+                            | (uint)(digest[(i * 4) + 3] & 0xff)
+                        ) >> (j * 8)
+                    );
+                }
+            }
+
+            return new AesParams()
+            {
+                Iv = aesIV,
+                Key = aesKey,
+                DecodedSize = decodedSize,
+            };
+        }
+        finally
+        {
+            // Dispose all IV hash instances
+            foreach (var hash in ivHashes)
+            {
+                hash?.Dispose();
             }
         }
-
-        return new AesParams()
-        {
-            Iv = aesIV,
-            Key = aesKey,
-            DecodedSize = decodedSize,
-        };
     }
 
     private static AesParams? GetRar5AesParams(object rar5CryptoInfo, string password, long decodedSize)
