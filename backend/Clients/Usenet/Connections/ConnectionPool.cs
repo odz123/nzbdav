@@ -67,7 +67,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         var reservedCount = cancellationToken.GetContext<ReservedConnectionsContext>().Count;
-        if (reservedCount < 0 || reservedCount > _maxConnections)
+        if (reservedCount < 0 || reservedCount >= _maxConnections)
             reservedCount = 0;
 
         // Make caller cancellation also cancel the wait on the gate.
