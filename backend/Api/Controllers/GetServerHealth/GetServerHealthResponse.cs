@@ -17,6 +17,7 @@ public class ServerHealthInfo
     public int ConsecutiveFailures { get; set; }
     public int TotalSuccesses { get; set; }
     public int TotalFailures { get; set; }
+    public int TotalArticlesNotFound { get; set; }
     public DateTime? LastSuccessTime { get; set; }
     public DateTime? LastFailureTime { get; set; }
     public string? LastException { get; set; }

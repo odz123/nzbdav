@@ -92,8 +92,14 @@ export function ServerHealth({ servers }: { servers: ServerHealthInfo[] }) {
                                     <tr>
                                         <td className={styles.label}>Success Rate:</td>
                                         <td>{successRate}%</td>
+                                        <td className={styles.label}>Articles Not Found:</td>
+                                        <td className={server.totalArticlesNotFound > 0 ? "text-warning" : ""}>
+                                            {server.totalArticlesNotFound.toLocaleString()}
+                                        </td>
+                                    </tr>
+                                    <tr>
                                         <td className={styles.label}>Consecutive Failures:</td>
-                                        <td className={server.consecutiveFailures > 0 ? "text-danger" : ""}>
+                                        <td colSpan={3} className={server.consecutiveFailures > 0 ? "text-danger" : ""}>
                                             {server.consecutiveFailures}
                                         </td>
                                     </tr>
