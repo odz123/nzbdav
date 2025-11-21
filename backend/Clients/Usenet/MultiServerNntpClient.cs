@@ -336,6 +336,12 @@ public class MultiServerNntpClient : INntpClient
                 // Try next server
                 continue;
             }
+            catch (OperationCanceledException)
+            {
+                // Operation was canceled by the client (not a server failure)
+                // Don't record as server failure, don't try other servers, just rethrow
+                throw;
+            }
             catch (Exception ex)
             {
                 _logger?.LogError(
@@ -422,6 +428,12 @@ public class MultiServerNntpClient : INntpClient
                     exceptions.Add(ex);
                     // Try next server
                     continue;
+                }
+                catch (OperationCanceledException)
+                {
+                    // Operation was canceled by the client (not a server failure)
+                    // Don't record as server failure, don't try other servers, just rethrow
+                    throw;
                 }
                 catch (Exception ex)
                 {
