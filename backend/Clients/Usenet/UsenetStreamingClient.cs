@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Config;
@@ -17,18 +18,21 @@ public class UsenetStreamingClient
     private readonly WebsocketManager _websocketManager;
     private readonly ServerHealthTracker _healthTracker;
     private readonly ConfigManager _configManager;
+    private readonly ILogger<MultiServerNntpClient>? _logger;
     private MultiServerNntpClient? _multiServerClient;
     private IMemoryCache _healthySegmentCache;
 
     public UsenetStreamingClient(
         ConfigManager configManager,
         WebsocketManager websocketManager,
-        ServerHealthTracker healthTracker)
+        ServerHealthTracker healthTracker,
+        ILogger<MultiServerNntpClient>? logger = null)
     {
         // initialize private members
         _websocketManager = websocketManager;
         _healthTracker = healthTracker;
         _configManager = configManager;
+        _logger = logger;
 
         // initialize healthy segment cache (24 hour TTL, max 50,000 entries)
         _healthySegmentCache = new MemoryCache(new MemoryCacheOptions() { SizeLimit = 50000 });
@@ -37,7 +41,7 @@ public class UsenetStreamingClient
         var serverConfigs = configManager.GetUsenetServers();
 
         // initialize the multi-server client
-        _multiServerClient = new MultiServerNntpClient(serverConfigs, _healthTracker);
+        _multiServerClient = new MultiServerNntpClient(serverConfigs, _healthTracker, _logger);
 
         // wrap with caching
         var cache = new MemoryCache(new MemoryCacheOptions() { SizeLimit = 8192 });
