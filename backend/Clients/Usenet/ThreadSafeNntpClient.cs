@@ -60,7 +60,7 @@ public class ThreadSafeNntpClient : INntpClient
                 // Article definitely not found - rethrow as-is for multi-server failover
                 throw;
             }
-            catch (Usenet.Exceptions.NntpException ex)
+            catch (global::Usenet.Exceptions.NntpException ex)
             {
                 // Check if this is an "article not found" error based on NNTP error codes/messages
                 if (IsArticleNotFoundError(ex.Message))
@@ -100,7 +100,7 @@ public class ThreadSafeNntpClient : INntpClient
                 // Article definitely not found - rethrow as-is for multi-server failover
                 throw;
             }
-            catch (Usenet.Exceptions.NntpException ex)
+            catch (global::Usenet.Exceptions.NntpException ex)
             {
                 // Check if this is an "article not found" error based on NNTP error codes/messages
                 if (IsArticleNotFoundError(ex.Message))
@@ -238,7 +238,7 @@ public class ThreadSafeNntpClient : INntpClient
                 // Article definitely not found - rethrow as-is for multi-server failover
                 throw;
             }
-            catch (Usenet.Exceptions.NntpException ex)
+            catch (global::Usenet.Exceptions.NntpException ex)
             {
                 // Check if this is an "article not found" error based on NNTP error codes/messages
                 if (IsArticleNotFoundError(ex.Message))
@@ -272,7 +272,7 @@ public class ThreadSafeNntpClient : INntpClient
             // Article definitely not found - rethrow as-is for multi-server failover
             throw;
         }
-        catch (Usenet.Exceptions.NntpException ex)
+        catch (global::Usenet.Exceptions.NntpException ex)
         {
             // Check if this is an "article not found" error based on NNTP error codes/messages
             if (IsArticleNotFoundError(ex.Message))
