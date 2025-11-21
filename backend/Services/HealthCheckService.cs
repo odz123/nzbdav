@@ -70,9 +70,10 @@ public class HealthCheckService
                 }
 
                 // set reserved-connections context
+                // Use total connections across all servers for multi-server compatibility
                 var maxRepairConnections = _configManager.GetMaxRepairConnections();
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationToken);
-                var reservedConnections = _configManager.GetMaxConnections() - maxRepairConnections;
+                var reservedConnections = _configManager.GetTotalMaxConnections() - maxRepairConnections;
                 using var _ = cts.Token.SetScopedContext(new ReservedConnectionsContext(reservedConnections));
 
                 // get multiple davItems to health-check in parallel
