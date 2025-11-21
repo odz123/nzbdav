@@ -191,9 +191,23 @@ public class UsenetStreamingClient
         startTime.Stop();
         var samplingPercentage = totalSegments > 0 ? (double)sampledSegments / totalSegments : 1.0;
         var cacheEfficiency = sampledSegments > 0 ? (double)cacheHits / sampledSegments : 0.0;
-        Serilog.Log.Information(
-            "Health check completed: {TotalSegments} segments, {SampledSegments} sampled ({SamplingPercentage:P0}), {CacheHits} cache hits ({CacheEfficiency:P0}), {CheckedSegments} network checks, {NewCacheEntries} new cache entries, {ElapsedMs}ms",
-            totalSegments, sampledSegments, samplingPercentage, cacheHits, cacheEfficiency, segmentsToActuallyCheck.Count, newCacheEntries, startTime.ElapsedMilliseconds);
+
+        // Log server health stats to help debug multi-server issues
+        var serverHealthStats = GetServerHealthStats();
+        if (serverHealthStats.Count > 1)
+        {
+            var healthSummary = string.Join(", ", serverHealthStats.Select(s =>
+                $"{s.ServerId.Substring(0, Math.Min(8, s.ServerId.Length))}: {(s.IsAvailable ? "OK" : "UNAVAILABLE")} ({s.TotalSuccesses}✓/{s.TotalFailures}✗)"));
+            Serilog.Log.Information(
+                "Health check completed: {TotalSegments} segments, {SampledSegments} sampled ({SamplingPercentage:P0}), {CacheHits} cache hits ({CacheEfficiency:P0}), {CheckedSegments} network checks, {NewCacheEntries} new cache entries, {ElapsedMs}ms | Server health: [{HealthSummary}]",
+                totalSegments, sampledSegments, samplingPercentage, cacheHits, cacheEfficiency, segmentsToActuallyCheck.Count, newCacheEntries, startTime.ElapsedMilliseconds, healthSummary);
+        }
+        else
+        {
+            Serilog.Log.Information(
+                "Health check completed: {TotalSegments} segments, {SampledSegments} sampled ({SamplingPercentage:P0}), {CacheHits} cache hits ({CacheEfficiency:P0}), {CheckedSegments} network checks, {NewCacheEntries} new cache entries, {ElapsedMs}ms",
+                totalSegments, sampledSegments, samplingPercentage, cacheHits, cacheEfficiency, segmentsToActuallyCheck.Count, newCacheEntries, startTime.ElapsedMilliseconds);
+        }
     }
 
     private static List<string> GetStrategicSample(List<string> segments, double samplingRate, int minSegments)

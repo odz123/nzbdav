@@ -194,8 +194,12 @@ public class HealthCheckService
                 ? (DateTimeOffset.UtcNow - davItem.ReleaseDate.Value).Days
                 : (int?)null;
 
-            Log.Information("Health check starting: {FileName} - {SegmentCount} segments, {SamplingRate:P0} sampling rate, {FileAgeDays} days old",
-                davItem.Name, segments.Count, samplingRate, fileAge);
+            var serverConfigs = _usenetClient.GetServerConfigs();
+            var serverCount = serverConfigs.Count;
+            var serverNames = string.Join(", ", serverConfigs.Select(s => s.Name));
+
+            Log.Information("Health check starting: {FileName} - {SegmentCount} segments, {SamplingRate:P0} sampling rate, {FileAgeDays} days old, {ServerCount} servers: [{ServerNames}]",
+                davItem.Name, segments.Count, samplingRate, fileAge, serverCount, serverNames);
 
             var progress = progressHook.ToPercentage(segments.Count);
             await _usenetClient.CheckAllSegmentsAsync(segments, concurrency, samplingRate, minSegments, progress, ct);
