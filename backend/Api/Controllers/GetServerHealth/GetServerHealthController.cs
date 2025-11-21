@@ -29,6 +29,7 @@ public class GetServerHealthController(UsenetStreamingClient usenetClient) : Bas
                     ConsecutiveFailures = health?.ConsecutiveFailures ?? 0,
                     TotalSuccesses = health?.TotalSuccesses ?? 0,
                     TotalFailures = health?.TotalFailures ?? 0,
+                    TotalArticlesNotFound = health?.TotalArticlesNotFound ?? 0,
                     LastSuccessTime = health?.LastSuccessTime,
                     LastFailureTime = health?.LastFailureTime,
                     LastException = health?.LastException

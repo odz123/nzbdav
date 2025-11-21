@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using NzbWebDAV.Exceptions;
 
 namespace NzbWebDAV.Clients.Usenet;
 
@@ -109,6 +110,7 @@ public class ServerHealthTracker
         private int _consecutiveFailures;
         private int _totalSuccesses;
         private int _totalFailures;
+        private int _totalArticlesNotFound;
         private DateTime? _lastSuccessTime;
         private DateTime? _lastFailureTime;
         private Exception? _lastException;
@@ -163,6 +165,12 @@ public class ServerHealthTracker
                 _lastFailureTime = DateTime.UtcNow;
                 _lastException = exception;
 
+                // Track article not found errors specifically
+                if (exception is UsenetArticleNotFoundException)
+                {
+                    _totalArticlesNotFound++;
+                }
+
                 // BUG FIX #1: If we're in half-open and get a failure, immediately reopen
                 if (_circuitState == CircuitState.HalfOpen)
                 {
@@ -202,6 +210,7 @@ public class ServerHealthTracker
                     ConsecutiveFailures = _consecutiveFailures,
                     TotalSuccesses = _totalSuccesses,
                     TotalFailures = _totalFailures,
+                    TotalArticlesNotFound = _totalArticlesNotFound,
                     LastSuccessTime = _lastSuccessTime,
                     LastFailureTime = _lastFailureTime,
                     LastException = _lastException?.Message
@@ -231,6 +240,7 @@ public class ServerHealthStats
     public int ConsecutiveFailures { get; set; }
     public int TotalSuccesses { get; set; }
     public int TotalFailures { get; set; }
+    public int TotalArticlesNotFound { get; set; }
     public DateTime? LastSuccessTime { get; set; }
     public DateTime? LastFailureTime { get; set; }
     public string? LastException { get; set; }

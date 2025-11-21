@@ -371,6 +371,7 @@ export type ServerHealthInfo = {
     consecutiveFailures: number,
     totalSuccesses: number,
     totalFailures: number,
+    totalArticlesNotFound: number,
     lastSuccessTime: string | null,
     lastFailureTime: string | null,
     lastException: string | null
