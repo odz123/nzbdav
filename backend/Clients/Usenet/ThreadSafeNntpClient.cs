@@ -16,6 +16,12 @@ public class ThreadSafeNntpClient : INntpClient
     private readonly NntpClient _client;
     private readonly SemaphoreSlim _semaphore = new(1, 1);
 
+    // Compiled regex for better performance when detecting article not found errors
+    private static readonly System.Text.RegularExpressions.Regex ArticleNotFound423Regex =
+        new(@"(\b|^|\[|\()423(\b|$|\]|\)|:|\s)", System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    private static readonly System.Text.RegularExpressions.Regex ArticleNotFound430Regex =
+        new(@"(\b|^|\[|\()430(\b|$|\]|\)|:|\s)", System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
     public ThreadSafeNntpClient()
     {
         _connection = new NntpConnection();
@@ -36,16 +42,35 @@ public class ThreadSafeNntpClient : INntpClient
     {
         return Synchronized(() =>
         {
-            var response = _client.Stat(new NntpMessageId(segmentId));
-
-            // Throw exception if article not found, so multi-server failover works
-            if (response.ResponseType == NntpStatResponseType.NoArticleWithThatNumber ||
-                response.ResponseType == NntpStatResponseType.NoArticleWithThatMessageId)
+            try
             {
-                throw new UsenetArticleNotFoundException(segmentId);
-            }
+                var response = _client.Stat(new NntpMessageId(segmentId));
 
-            return response;
+                // Throw exception if article not found, so multi-server failover works
+                if (response.ResponseType == NntpStatResponseType.NoArticleWithThatNumber ||
+                    response.ResponseType == NntpStatResponseType.NoArticleWithThatMessageId)
+                {
+                    throw new UsenetArticleNotFoundException(segmentId);
+                }
+
+                return response;
+            }
+            catch (UsenetArticleNotFoundException)
+            {
+                // Article definitely not found - rethrow as-is for multi-server failover
+                throw;
+            }
+            catch (Usenet.Exceptions.NntpException ex)
+            {
+                // Check if this is an "article not found" error based on NNTP error codes/messages
+                if (IsArticleNotFoundError(ex.Message))
+                {
+                    throw new UsenetArticleNotFoundException(segmentId);
+                }
+
+                // For other NNTP errors, rethrow so they can be handled by retry logic
+                throw;
+            }
         }, cancellationToken);
     }
 
@@ -77,12 +102,8 @@ public class ThreadSafeNntpClient : INntpClient
             }
             catch (Usenet.Exceptions.NntpException ex)
             {
-                // Check if this is an "article not found" error based on common NNTP error messages
-                var message = ex.Message?.ToLowerInvariant() ?? "";
-                if (message.Contains("no article") ||
-                    message.Contains("article not found") ||
-                    message.Contains("423") ||  // NNTP 423: No article with that number
-                    message.Contains("430"))    // NNTP 430: No article with that message-id
+                // Check if this is an "article not found" error based on NNTP error codes/messages
+                if (IsArticleNotFoundError(ex.Message))
                 {
                     throw new UsenetArticleNotFoundException(segmentId);
                 }
@@ -165,6 +186,33 @@ public class ThreadSafeNntpClient : INntpClient
         }
     }
 
+    private static bool IsArticleNotFoundError(string errorMessage)
+    {
+        if (string.IsNullOrWhiteSpace(errorMessage))
+            return false;
+
+        var message = errorMessage.ToLowerInvariant();
+
+        // Check for common "article not found" phrases
+        if (message.Contains("no article") ||
+            message.Contains("article not found") ||
+            message.Contains("no such article"))
+        {
+            return true;
+        }
+
+        // Check for NNTP error codes with better precision using compiled regex
+        // 423: No article with that number
+        // 430: No article with that message-id
+        // Match patterns like: "423 ", " 423", "[423]", "(423)", "error 423", etc.
+        if (ArticleNotFound423Regex.IsMatch(message) || ArticleNotFound430Regex.IsMatch(message))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
     private UsenetArticle GetArticle(string segmentId, bool includeHeaders)
     {
         if (includeHeaders)
@@ -192,12 +240,8 @@ public class ThreadSafeNntpClient : INntpClient
             }
             catch (Usenet.Exceptions.NntpException ex)
             {
-                // Check if this is an "article not found" error based on common NNTP error messages
-                var message = ex.Message?.ToLowerInvariant() ?? "";
-                if (message.Contains("no article") ||
-                    message.Contains("article not found") ||
-                    message.Contains("423") ||  // NNTP 423: No article with that number
-                    message.Contains("430"))    // NNTP 430: No article with that message-id
+                // Check if this is an "article not found" error based on NNTP error codes/messages
+                if (IsArticleNotFoundError(ex.Message))
                 {
                     throw new UsenetArticleNotFoundException(segmentId);
                 }
@@ -230,12 +274,8 @@ public class ThreadSafeNntpClient : INntpClient
         }
         catch (Usenet.Exceptions.NntpException ex)
         {
-            // Check if this is an "article not found" error based on common NNTP error messages
-            var message = ex.Message?.ToLowerInvariant() ?? "";
-            if (message.Contains("no article") ||
-                message.Contains("article not found") ||
-                message.Contains("423") ||  // NNTP 423: No article with that number
-                message.Contains("430"))    // NNTP 430: No article with that message-id
+            // Check if this is an "article not found" error based on NNTP error codes/messages
+            if (IsArticleNotFoundError(ex.Message))
             {
                 throw new UsenetArticleNotFoundException(segmentId);
             }
