@@ -255,20 +255,29 @@ public class MultiServerNntpClient : INntpClient
             unavailableServers.Clear();
         }
 
+        _logger?.LogDebug("Multi-server operation: {AvailableCount} available, {UnavailableCount} unavailable servers",
+            availableServers.Count, unavailableServers.Count);
+
         // Try available servers first
         foreach (var server in availableServers)
         {
             try
             {
-                _logger?.LogDebug("Attempting operation on server: {ServerName}", server.Config.Name);
+                _logger?.LogDebug("Attempting operation on server: {ServerName} (Priority: {Priority})",
+                    server.Config.Name, server.Config.Priority);
                 var result = await operation(server);
                 _healthTracker.RecordSuccess(server.Config.Id);
 
                 if (exceptions.Count > 0)
                 {
                     _logger?.LogInformation(
-                        "Successfully retrieved {ResourceId} from fallback server {ServerName} after {FailureCount} failures",
-                        resourceId, server.Config.Name, exceptions.Count);
+                        "Successfully retrieved {ResourceId} from fallback server {ServerName} (Priority: {Priority}) after {FailureCount} failures",
+                        resourceId, server.Config.Name, server.Config.Priority, exceptions.Count);
+                }
+                else
+                {
+                    _logger?.LogDebug("Successfully retrieved {ResourceId} from primary server {ServerName} (Priority: {Priority})",
+                        resourceId, server.Config.Name, server.Config.Priority);
                 }
 
                 return result;
@@ -466,6 +475,10 @@ public class MultiServerNntpClient : INntpClient
             {
                 _serverStats.Clear();
             }
+
+            // Reset health tracker for all servers to clear circuit breaker states
+            // This ensures newly configured servers start with a clean slate
+            _healthTracker.ResetAllServerHealth();
 
             InitializeServers(newServerConfigs);
 
