@@ -57,7 +57,7 @@ public class ServerHealthTracker
             };
         }
 
-        return health.GetStats(serverId);
+        return health.GetStats(serverId, _circuitBreakerTimeout);
     }
 
     /// <summary>
@@ -93,25 +93,28 @@ public class ServerHealthTracker
         private DateTime? _lastSuccessTime;
         private DateTime? _lastFailureTime;
         private Exception? _lastException;
-        private bool _isCircuitOpen;
+        private CircuitState _circuitState = CircuitState.Closed;
 
         public bool IsAvailable(TimeSpan circuitBreakerTimeout)
         {
             lock (_lock)
             {
-                // If circuit is open, check if timeout has elapsed
-                if (_isCircuitOpen)
+                // If circuit is open, check if timeout has elapsed to transition to half-open
+                if (_circuitState == CircuitState.Open)
                 {
-                    if (DateTime.UtcNow - _lastFailureTime > circuitBreakerTimeout)
+                    // BUG FIX #2: Add null safety check for _lastFailureTime
+                    if (_lastFailureTime.HasValue &&
+                        DateTime.UtcNow - _lastFailureTime.Value > circuitBreakerTimeout)
                     {
-                        // Reset to half-open state
-                        _isCircuitOpen = false;
-                        _consecutiveFailures = 0;
-                        return true;
+                        // BUG FIX #1: Transition to half-open state (don't immediately close)
+                        // This allows the next request to test the server
+                        _circuitState = CircuitState.HalfOpen;
+                        return true; // Allow one request to test the server
                     }
                     return false; // Circuit still open
                 }
 
+                // Circuit is closed or half-open, allow requests
                 return true;
             }
         }
@@ -123,7 +126,10 @@ public class ServerHealthTracker
                 _consecutiveFailures = 0;
                 _totalSuccesses++;
                 _lastSuccessTime = DateTime.UtcNow;
-                _isCircuitOpen = false;
+
+                // BUG FIX #1: Close circuit from any state on success
+                // This handles the half-open -> closed transition
+                _circuitState = CircuitState.Closed;
             }
         }
 
@@ -136,22 +142,39 @@ public class ServerHealthTracker
                 _lastFailureTime = DateTime.UtcNow;
                 _lastException = exception;
 
-                // Open circuit if threshold exceeded
-                if (_consecutiveFailures >= failureThreshold)
+                // BUG FIX #1: If we're in half-open and get a failure, immediately reopen
+                if (_circuitState == CircuitState.HalfOpen)
                 {
-                    _isCircuitOpen = true;
+                    _circuitState = CircuitState.Open;
+                }
+                // Open circuit if threshold exceeded
+                else if (_consecutiveFailures >= failureThreshold)
+                {
+                    _circuitState = CircuitState.Open;
                 }
             }
         }
 
-        public ServerHealthStats GetStats(string serverId)
+        public ServerHealthStats GetStats(string serverId, TimeSpan circuitBreakerTimeout)
         {
             lock (_lock)
             {
+                // BUG FIX #3: Use same logic as IsAvailable for consistency
+                bool isAvailable;
+                if (_circuitState == CircuitState.Open)
+                {
+                    isAvailable = _lastFailureTime.HasValue &&
+                                  DateTime.UtcNow - _lastFailureTime.Value > circuitBreakerTimeout;
+                }
+                else
+                {
+                    isAvailable = true; // Closed or HalfOpen
+                }
+
                 return new ServerHealthStats
                 {
                     ServerId = serverId,
-                    IsAvailable = !_isCircuitOpen,
+                    IsAvailable = isAvailable,
                     ConsecutiveFailures = _consecutiveFailures,
                     TotalSuccesses = _totalSuccesses,
                     TotalFailures = _totalFailures,
@@ -161,6 +184,16 @@ public class ServerHealthTracker
                 };
             }
         }
+    }
+
+    /// <summary>
+    /// Circuit breaker state
+    /// </summary>
+    private enum CircuitState
+    {
+        Closed,    // Normal operation
+        Open,      // Circuit is open, rejecting requests
+        HalfOpen   // Testing if service has recovered
     }
 }
 

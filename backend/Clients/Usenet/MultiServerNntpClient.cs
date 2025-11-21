@@ -288,6 +288,9 @@ public class MultiServerNntpClient : INntpClient
                     "Article {ResourceId} not found on server {ServerName}",
                     resourceId, server.Config.Name);
 
+                // BUG FIX #4: Record success - server responded correctly, article just doesn't exist
+                _healthTracker.RecordSuccess(server.Config.Id);
+
                 exceptions.Add(ex);
 
                 // If article not found is not retryable for this operation, throw immediately
@@ -340,6 +343,9 @@ public class MultiServerNntpClient : INntpClient
                     "Unexpected error on server {ServerName}",
                     server.Config.Name);
 
+                // BUG FIX #5: Record failure for all exceptions to trigger circuit breaker
+                _healthTracker.RecordFailure(server.Config.Id, ex);
+
                 exceptions.Add(ex);
                 // Try next server
                 continue;
@@ -376,6 +382,9 @@ public class MultiServerNntpClient : INntpClient
                     _logger?.LogWarning(
                         "Article {ResourceId} not found on unavailable server {ServerName}",
                         resourceId, server.Config.Name);
+
+                    // BUG FIX #6: Record success - server responded correctly, article just doesn't exist
+                    _healthTracker.RecordSuccess(server.Config.Id);
 
                     exceptions.Add(ex);
                     // Try next server
@@ -420,6 +429,9 @@ public class MultiServerNntpClient : INntpClient
                         ex,
                         "Unexpected error on unavailable server {ServerName}",
                         server.Config.Name);
+
+                    // BUG FIX #6: Record failure for all exceptions to trigger circuit breaker
+                    _healthTracker.RecordFailure(server.Config.Id, ex);
 
                     exceptions.Add(ex);
                     // Try next server
