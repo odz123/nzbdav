@@ -14,7 +14,10 @@ using Serilog;
 namespace NzbWebDAV.Services;
 
 /// <summary>
-/// This service monitors for health checks
+/// HealthCheckService is a singleton service that monitors file health and performs repairs.
+/// IMPORTANT: As a singleton, this service must NOT inject DavDatabaseContext (which is scoped).
+/// Instead, create new context instances per operation using 'await using var dbContext = new DavDatabaseContext()'
+/// This pattern prevents disposed context exceptions and ensures proper database connection management.
 /// </summary>
 public class HealthCheckService : IDisposable
 {

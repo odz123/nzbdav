@@ -13,6 +13,11 @@ public static class EnvironmentUtil
         return long.TryParse(Environment.GetEnvironmentVariable(envVariable), out var longValue) ? longValue : null;
     }
 
+    public static int? GetIntVariable(string envVariable)
+    {
+        return int.TryParse(Environment.GetEnvironmentVariable(envVariable), out var intValue) ? intValue : null;
+    }
+
     public static bool IsVariableTrue(string envVariable)
     {
         var value = Environment.GetEnvironmentVariable(envVariable)?.ToLower();

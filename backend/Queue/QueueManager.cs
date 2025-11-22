@@ -9,6 +9,12 @@ using Serilog;
 
 namespace NzbWebDAV.Queue;
 
+/// <summary>
+/// QueueManager is a singleton service that processes the download queue.
+/// IMPORTANT: As a singleton, this service must NOT inject DavDatabaseContext (which is scoped).
+/// Instead, create new context instances per operation using 'await using var dbContext = new DavDatabaseContext()'
+/// This pattern prevents disposed context exceptions and ensures proper database connection management.
+/// </summary>
 public class QueueManager : IDisposable
 {
     private InProgressQueueItem? _inProgressQueueItem;
