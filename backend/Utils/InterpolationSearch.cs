@@ -35,9 +35,12 @@ public static class InterpolationSearch
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            // make sure our search is even possible.
-            if (!byteRangeToSearch.Contains(searchByte) || indexRangeToSearch.Count <= 0)
-                throw new SeekPositionNotFoundException($"Corrupt file. Cannot find byte position {searchByte}.");
+            // BUG FIX NEW-011: Improve exception messages to be more specific
+            if (!byteRangeToSearch.Contains(searchByte))
+                throw new SeekPositionNotFoundException($"Seek position {searchByte} is outside valid range [{byteRangeToSearch.StartInclusive}, {byteRangeToSearch.EndExclusive})");
+
+            if (indexRangeToSearch.Count <= 0)
+                throw new SeekPositionNotFoundException($"No segments available in search range. File may be corrupted or seek position {searchByte} is invalid.");
 
             // make a guess
             var searchByteFromStart = searchByte - byteRangeToSearch.StartInclusive;
@@ -48,7 +51,7 @@ public static class InterpolationSearch
 
             // make sure the result is within the range of our search space
             if (!byteRangeOfGuessedIndex.IsContainedWithin(byteRangeToSearch))
-                throw new SeekPositionNotFoundException($"Corrupt file. Cannot find byte position {searchByte}.");
+                throw new SeekPositionNotFoundException($"Segment at index {guessedIndex} has byte range outside search space. File may be corrupted. Seek position: {searchByte}");
 
             // if we guessed too low, adjust our lower bounds in order to search higher next time
             if (byteRangeOfGuessedIndex.EndExclusive <= searchByte)

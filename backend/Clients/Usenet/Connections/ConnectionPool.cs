@@ -137,7 +137,18 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     {
         if (Volatile.Read(ref _disposed) == 1)
         {
-            _ = DisposeConnectionAsync(connection); // fire & forget
+            // BUG FIX NEW-015: Handle disposal errors instead of silently swallowing them
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await DisposeConnectionAsync(connection);
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Failed to dispose connection during return: {ex.Message}");
+                }
+            });
             Interlocked.Decrement(ref _live);
             TriggerConnectionPoolChangedEvent();
             return;
@@ -157,7 +168,18 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     private void Destroy(T connection)
     {
         // When a lock requests replacement, we dispose the connection instead of reusing.
-        _ = DisposeConnectionAsync(connection); // fire & forget
+        // BUG FIX NEW-015: Handle disposal errors instead of silently swallowing them
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await DisposeConnectionAsync(connection);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to dispose connection during destroy: {ex.Message}");
+            }
+        });
         Interlocked.Decrement(ref _live);
         if (Volatile.Read(ref _disposed) == 0)
         {
@@ -168,7 +190,18 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
     private ValueTask DestroyAsync(T connection)
     {
-        _ = DisposeConnectionAsync(connection); // fire & forget
+        // BUG FIX NEW-015: Handle disposal errors instead of silently swallowing them
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await DisposeConnectionAsync(connection);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to dispose connection during async destroy: {ex.Message}");
+            }
+        });
         Interlocked.Decrement(ref _live);
         if (Volatile.Read(ref _disposed) == 0)
         {
