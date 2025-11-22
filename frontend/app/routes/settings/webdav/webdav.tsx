@@ -128,5 +128,5 @@ function isValidUser(user: string): boolean {
 
 function isValidPassword(password: string): boolean {
     const MIN_PASSWORD_LENGTH = 8;
-    return password && password.length >= MIN_PASSWORD_LENGTH;
+    return Boolean(password && password.length >= MIN_PASSWORD_LENGTH);
 }
