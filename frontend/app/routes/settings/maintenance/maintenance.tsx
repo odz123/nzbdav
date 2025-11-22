@@ -24,7 +24,7 @@ export function Maintenance({ savedConfig }: MaintenanceProps) {
 
                 <Accordion.Item className={styles.accordionItem} eventKey="strm-to-symlinks">
                     <Accordion.Header className={styles.accordionHeader}>
-                        Convert Strm Files to Symlnks
+                        Convert Strm Files to Symlinks
                     </Accordion.Header>
                     <Accordion.Body className={styles.accordionBody}>
                         <ConvertStrmToSymlinks savedConfig={savedConfig} />
