@@ -88,7 +88,7 @@ public class UpdateConfigController(DavDatabaseClient dbClient, ConfigManager co
         await dbClient.Ctx.SaveChangesAsync(HttpContext.RequestAborted);
 
         // 5. Update the ConfigManager
-        configManager.UpdateValues(request.ConfigItems);
+        await configManager.UpdateValuesAsync(request.ConfigItems);
 
         // return
         return new UpdateConfigResponse { Status = true };

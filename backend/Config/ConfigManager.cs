@@ -1,4 +1,5 @@
-﻿using System.Text.Json;
+﻿using System.Collections.Concurrent;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using NzbWebDAV.Clients.Usenet.Models;
 using NzbWebDAV.Database;
@@ -9,9 +10,8 @@ namespace NzbWebDAV.Config;
 
 public class ConfigManager
 {
-    private readonly Dictionary<string, string> _config = new();
+    private readonly ConcurrentDictionary<string, string> _config = new();
     private readonly SemaphoreSlim _configLock = new(1, 1);
-    private readonly object _syncLock = new(); // For synchronous access
     public event EventHandler<ConfigEventArgs>? OnConfigChanged;
 
     public async Task LoadConfig()
@@ -22,13 +22,10 @@ public class ConfigManager
             await using var dbContext = new DavDatabaseContext();
             var configItems = await dbContext.ConfigItems.ToListAsync();
 
-            lock (_syncLock)
+            _config.Clear();
+            foreach (var configItem in configItems)
             {
-                _config.Clear();
-                foreach (var configItem in configItems)
-                {
-                    _config[configItem.ConfigName] = configItem.ConfigValue;
-                }
+                _config[configItem.ConfigName] = configItem.ConfigValue;
             }
         }
         finally
@@ -39,10 +36,7 @@ public class ConfigManager
 
     public string? GetConfigValue(string configName)
     {
-        lock (_syncLock)
-        {
-            return _config.TryGetValue(configName, out string? value) ? value : null;
-        }
+        return _config.TryGetValue(configName, out string? value) ? value : null;
     }
 
     public T? GetConfigValue<T>(string configName)
@@ -52,9 +46,9 @@ public class ConfigManager
         return rawValue == null ? default : JsonSerializer.Deserialize<T>(rawValue, options);
     }
 
-    public void UpdateValues(List<ConfigItem> configItems)
+    public async Task UpdateValuesAsync(List<ConfigItem> configItems)
     {
-        _configLock.Wait();
+        await _configLock.WaitAsync();
         try
         {
             foreach (var configItem in configItems)

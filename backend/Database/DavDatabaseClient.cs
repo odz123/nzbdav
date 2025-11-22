@@ -83,12 +83,12 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     )
     {
         var nowTime = DateTime.UtcNow;
+        // PERF FIX #10: Remove redundant Skip(0) and Take(1) - FirstOrDefaultAsync already limits to 1
+        // Also moved Where before OrderBy for better query performance
         var queueItem = await Ctx.QueueItems
+            .Where(q => q.PauseUntil == null || nowTime >= q.PauseUntil)
             .OrderByDescending(q => q.Priority)
             .ThenBy(q => q.CreatedAt)
-            .Where(q => q.PauseUntil == null || nowTime >= q.PauseUntil)
-            .Skip(0)
-            .Take(1)
             .FirstOrDefaultAsync(ct);
         var queueNzbContents = queueItem != null
             ? await Ctx.QueueNzbContents.FirstOrDefaultAsync(q => q.Id == queueItem.Id, ct)
