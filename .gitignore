@@ -16,3 +16,12 @@ nuget
 
 .idea/
 .vscode/
+
+####################
+# Build artifacts  #
+####################
+
+frontend/server.js
+frontend/server.d.ts
+frontend/vite.config.js
+frontend/vite.config.d.ts
