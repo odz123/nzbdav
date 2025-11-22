@@ -338,17 +338,19 @@ public class ConfigManager
                         .Where(s => s.Enabled && !string.IsNullOrWhiteSpace(s.Host))
                         .ToList();
 
-                    // Only return filtered servers if we have at least one valid server
-                    // Otherwise fall through to legacy configuration
+                    // BUG FIX: If all servers are filtered out, fall through to legacy configuration
+                    // instead of returning an empty list which would break all streams
                     if (filteredServers.Count > 0)
                     {
+                        // Only return filtered servers if we have at least one valid server
                         return filteredServers;
                     }
+                    // Otherwise fall through to legacy configuration
                 }
             }
             catch (JsonException)
             {
-                // Fall through to legacy configuration
+                // Failed to parse multi-server JSON - fall through to legacy configuration
             }
         }
 
@@ -356,8 +358,13 @@ public class ConfigManager
         var host = GetConfigValue("usenet.host");
         if (string.IsNullOrWhiteSpace(host))
         {
-            throw new InvalidOperationException(
-                "No Usenet server configuration found. Please configure either 'usenet.servers' or legacy 'usenet.host' settings.");
+            // BUG FIX: Provide clear error message explaining exactly what's wrong
+            var errorMessage = string.IsNullOrWhiteSpace(serversJson)
+                ? "No Usenet server configuration found. Please configure either 'usenet.servers' (multi-server) or 'usenet.host' (legacy single-server) settings."
+                : "All multi-server configurations are disabled or have invalid hostnames, and no legacy 'usenet.host' configuration exists. " +
+                  "Please either fix your multi-server configuration or add a legacy 'usenet.host' setting.";
+
+            throw new InvalidOperationException(errorMessage);
         }
 
         var port = int.TryParse(GetConfigValue("usenet.port"), out var parsedPort) ? parsedPort : 119;
