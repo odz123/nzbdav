@@ -334,9 +334,16 @@ public class ConfigManager
                 if (servers != null && servers.Count > 0)
                 {
                     // Filter out servers with invalid configuration (empty host, etc.)
-                    return servers
+                    var filteredServers = servers
                         .Where(s => s.Enabled && !string.IsNullOrWhiteSpace(s.Host))
                         .ToList();
+
+                    // Only return filtered servers if we have at least one valid server
+                    // Otherwise fall through to legacy configuration
+                    if (filteredServers.Count > 0)
+                    {
+                        return filteredServers;
+                    }
                 }
             }
             catch (JsonException)
