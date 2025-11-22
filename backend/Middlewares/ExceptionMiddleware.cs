@@ -33,9 +33,10 @@ public class ExceptionMiddleware(RequestDelegate next)
             }
 
             var filePath = GetRequestFilePath(context);
-            Log.Error($"File `{filePath}` has missing articles: {e.Message}");
+            // Log with exception parameter to include stack trace if needed for debugging
+            Log.Error(e, "File {FilePath} has missing articles: {SegmentId}", filePath, e.SegmentId);
         }
-        catch (SeekPositionNotFoundException)
+        catch (SeekPositionNotFoundException e)
         {
             if (!context.Response.HasStarted)
             {
@@ -45,7 +46,8 @@ public class ExceptionMiddleware(RequestDelegate next)
 
             var filePath = GetRequestFilePath(context);
             var seekPosition = context.Request.GetRange()?.Start?.ToString() ?? "unknown";
-            Log.Error($"File `{filePath}` could not seek to byte position: {seekPosition}");
+            // Log with exception parameter to include stack trace
+            Log.Error(e, "File {FilePath} could not seek to byte position: {SeekPosition}", filePath, seekPosition);
         }
         catch (Exception e) when (IsDavItemRequest(context))
         {
@@ -56,7 +58,29 @@ public class ExceptionMiddleware(RequestDelegate next)
             }
 
             var filePath = GetRequestFilePath(context);
-            Log.Error($"File `{filePath}` could not be read due to unhandled {e.GetType()}: {e.Message}");
+
+            // CRITICAL FIX: Log full exception with stack trace for debugging
+            // Include request method and path for better diagnostics
+            Log.Error(e,
+                "Unhandled exception serving WebDAV file {FilePath}. " +
+                "Type: {ExceptionType}, Request: {Method} {Path}",
+                filePath, e.GetType().Name, context.Request.Method, context.Request.Path);
+
+            // Re-throw critical exceptions that should crash the app
+            // These indicate serious issues that require immediate attention
+            if (e is OutOfMemoryException || e is StackOverflowException)
+            {
+                Log.Fatal(e, "Critical exception occurred - application will terminate");
+                throw;
+            }
+
+            // For database errors, log additional context
+            // This helps identify database corruption or connection issues quickly
+            if (e.GetType().Namespace?.StartsWith("Microsoft.EntityFrameworkCore") == true)
+            {
+                Log.Error("Database error detected - this may indicate database corruption or connection issues. " +
+                         "Check database health and connection pool.");
+            }
         }
     }
 

@@ -308,21 +308,31 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
     /* ----------------------------- IDisposable ------------------------------------ */
 
-    // PERF NOTE #3: Synchronous Dispose() calling async DisposeAsync()
-    // This blocking pattern is required to implement IDisposable while actual disposal is async.
-    // This is a known pattern in .NET when dealing with async resources in sync disposal.
+    // CRITICAL FIX: Synchronous Dispose() calling async DisposeAsync()
+    // Using Task.Run to avoid sync context deadlocks (ASP.NET Core, WinForms, WPF, etc.)
     // Callers should prefer DisposeAsync() when possible to avoid blocking.
     public void Dispose()
     {
-        // Properly wait for async disposal to complete
-        // This ensures all connections are disposed before returning
+        // BUG FIX: Use Task.Run to execute on thread pool thread, avoiding sync context deadlocks
+        // Add timeout to prevent hanging indefinitely
         try
         {
-            DisposeAsync().AsTask().GetAwaiter().GetResult();
+            var disposeTask = Task.Run(async () => await DisposeAsync());
+
+            if (!disposeTask.Wait(TimeSpan.FromSeconds(30)))
+            {
+                // Timeout occurred - log but don't throw in Dispose
+                System.Diagnostics.Debug.WriteLine(
+                    "ConnectionPool disposal timed out after 30 seconds. " +
+                    "Some connections may not have been properly disposed.");
+            }
         }
-        catch
+        catch (Exception ex)
         {
-            // Suppress exceptions during disposal
+            // Log specific exception types instead of catch-all
+            // Disposal should not throw, but we want to know what went wrong
+            System.Diagnostics.Debug.WriteLine(
+                $"ConnectionPool disposal failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
