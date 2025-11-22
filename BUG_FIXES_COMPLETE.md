@@ -295,22 +295,25 @@ README.md                - SESSION_KEY documentation
 
 ## 📚 Related Documentation
 
-### Bug Reports (Historical)
-- `BUG_REPORT.md` - Original 22 bugs found
-- `ADDITIONAL_BUG_REPORT.md` - 17 additional bugs
-- `NEW_BUGS_FOUND.md` - 15 new critical bugs
-- `PRE_LAUNCH_QA_REPORT.md` - Pre-launch audit
-
-### Fix Summaries
-- `BUG_FIXES_SUMMARY.md` - First 13 bugs fixed
-- `CRITICAL_FIXES_APPLIED.md` - Pre-launch QA fixes
-- `PERFORMANCE_FIXES_SUMMARY.md` - Performance issues
-
-### Phase Documentation
+### Current Documentation (Root)
 - `PHASE_1_FIXES_APPLIED.md` - UX & validation fixes
 - `PHASE_2_FIXES_APPLIED.md` - Security improvements
 - `PHASE_3_FIXES_APPLIED.md` - UX polish
 - `BUG_FIXES_COMPLETE.md` - This comprehensive summary
+
+### Archived Bug Reports (docs/archive/)
+- `BUG_REPORT.md` - Original 22 bugs found
+- `ADDITIONAL_BUG_REPORT.md` - 17 additional bugs
+- `NEW_BUGS_FOUND.md` - 15 new critical bugs
+- `PRE_LAUNCH_QA_REPORT.md` - Pre-launch audit
+- `BUG_FIXES_SUMMARY.md` - First 13 bugs fixed
+- `CRITICAL_FIXES_APPLIED.md` - Pre-launch QA fixes
+- `PERFORMANCE_FIXES_SUMMARY.md` - Performance issues
+- `PERFORMANCE_BUGS_REPORT.md` - Detailed performance analysis
+- `PERFORMANCE_ISSUES.md` - Performance tracking
+- `NEW_PERFORMANCE_ISSUES_FOUND.md` - Additional performance bugs
+
+> **Note:** Historical bug reports have been archived to `docs/archive/` to keep the repository root clean. All issues documented in these reports have been addressed.
 
 ---
 
