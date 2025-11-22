@@ -116,15 +116,28 @@ export default function Queue(props: Route.ComponentProps) {
         disableLiveView
     ]);
 
+    // PERF FIX NEW-010: Add exponential backoff for WebSocket reconnection to reduce churn during network issues
     useEffect(() => {
         if (disableLiveView) return;
         let ws: WebSocket;
         let disposed = false;
+        let attemptNumber = 0;
+
         function connect() {
             ws = new WebSocket(window.location.origin.replace(/^http/, 'ws'));
             ws.onmessage = receiveMessage(onWebsocketMessage);
-            ws.onopen = () => { ws.send(JSON.stringify(topicSubscriptions)); }
-            ws.onclose = () => { !disposed && setTimeout(() => connect(), 1000); };
+            ws.onopen = () => {
+                attemptNumber = 0;  // Reset on successful connection
+                ws.send(JSON.stringify(topicSubscriptions));
+            };
+            ws.onclose = () => {
+                if (!disposed) {
+                    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, max 30s
+                    const delay = Math.min(1000 * Math.pow(2, attemptNumber), 30000);
+                    setTimeout(() => connect(), delay);
+                    attemptNumber++;
+                }
+            };
             ws.onerror = () => { ws.close() };
             return () => { disposed = true; ws.close(); }
         }

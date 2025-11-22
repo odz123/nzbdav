@@ -1,6 +1,6 @@
 import { Button, Form } from "react-bootstrap";
 import styles from "./usenet.module.css"
-import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useState, useMemo, type Dispatch, type SetStateAction } from "react";
 
 type UsenetSettingsProps = {
     config: Record<string, string>
@@ -14,21 +14,25 @@ export function UsenetSettings({ config, setNewConfig, onReadyToSave }: UsenetSe
     const [testedConfig, setTestedConfig] = useState({});
     const isChangedSinceLastTest = isUsenetSettingsUpdated(config, testedConfig);
 
-    const TestButtonLabel = isFetching ? "Testing Connection..."
-        : !config["usenet.host"] ? "`Host` is required"
-        : !config["usenet.port"] ? "`Port` is required"
-        : !isPositiveInteger(config["usenet.port"]) ? "`Port` is invalid"
-        : !config["usenet.user"] ? "`User` is required"
-        : !config["usenet.pass"] ? "`Pass` is required"
-        : !config["usenet.connections"] ? "`Max Connections` is required"
-        : !config["usenet.connections-per-stream"] ? "`Connections Per Stream` is required"
-        : !isPositiveInteger(config["usenet.connections"]) ? "`Max Connections` is invalid"
-        : !config["usenet.connections-per-stream"] ? "`Connections Per Stream` is required"
-        : !isPositiveInteger(config["usenet.connections-per-stream"]) ? "`Connections Per Stream` is invalid"
-        : Number(config["usenet.connections-per-stream"]) > Number(config["usenet.connections"]) ? "`Connections Per Stream` is invalid"
-        : !isChangedSinceLastTest && isConnectionSuccessful ? "Connected ✅"
-        : !isChangedSinceLastTest && !isConnectionSuccessful ? "Test Connection ❌"
-        : "Test Connection";
+    // PERF FIX NEW-018: Add useMemo for button label computation to prevent re-computation on every render
+    const TestButtonLabel = useMemo(() => {
+        if (isFetching) return "Testing Connection...";
+        if (!config["usenet.host"]) return "`Host` is required";
+        if (!config["usenet.port"]) return "`Port` is required";
+        if (!isPositiveInteger(config["usenet.port"])) return "`Port` is invalid";
+        if (!config["usenet.user"]) return "`User` is required";
+        if (!config["usenet.pass"]) return "`Pass` is required";
+        if (!config["usenet.connections"]) return "`Max Connections` is required";
+        if (!config["usenet.connections-per-stream"]) return "`Connections Per Stream` is required";
+        if (!isPositiveInteger(config["usenet.connections"])) return "`Max Connections` is invalid";
+        if (!config["usenet.connections-per-stream"]) return "`Connections Per Stream` is required";
+        if (!isPositiveInteger(config["usenet.connections-per-stream"])) return "`Connections Per Stream` is invalid";
+        if (Number(config["usenet.connections-per-stream"]) > Number(config["usenet.connections"])) return "`Connections Per Stream` is invalid";
+        if (!isChangedSinceLastTest && isConnectionSuccessful) return "Connected ✅";
+        if (!isChangedSinceLastTest && !isConnectionSuccessful) return "Test Connection ❌";
+        return "Test Connection";
+    }, [isFetching, config, isChangedSinceLastTest, isConnectionSuccessful]);
+
     const testButtonVariant = isFetching ? "secondary"
         : TestButtonLabel === "Connected ✅" ? "success"
         : TestButtonLabel.includes("Test Connection") ? "primary"

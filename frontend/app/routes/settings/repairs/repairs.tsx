@@ -1,6 +1,6 @@
 import { Alert, Form } from "react-bootstrap";
 import styles from "./repairs.module.css"
-import { type Dispatch, type SetStateAction } from "react";
+import { type Dispatch, type SetStateAction, useMemo } from "react";
 import { className } from "~/utils/styling";
 
 type RepairsSettingsProps = {
@@ -10,7 +10,8 @@ type RepairsSettingsProps = {
 
 export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) {
     const libraryDirConfig = config["media.library-dir"];
-    const arrConfig = JSON.parse(config["arr.instances"]);
+    // PERF FIX NEW-008: Add useMemo for JSON.parse to prevent re-parsing on every render
+    const arrConfig = useMemo(() => JSON.parse(config["arr.instances"]), [config["arr.instances"]]);
     const areArrInstancesConfigured =
         arrConfig.RadarrInstances.length > 0 ||
         arrConfig.SonarrInstances.length > 0;
