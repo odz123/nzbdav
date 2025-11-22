@@ -42,8 +42,11 @@ public class UsenetStreamingClient : IDisposable, IAsyncDisposable
         _configManager = configManager;
         _logger = logger;
 
-        // initialize healthy segment cache (24 hour TTL, max 50,000 entries)
-        _healthySegmentCache = new MemoryCache(new MemoryCacheOptions() { SizeLimit = 50000 });
+        // MEDIUM-2 FIX: Initialize healthy segment cache with configurable size
+        _healthySegmentCache = new MemoryCache(new MemoryCacheOptions()
+        {
+            SizeLimit = configManager.GetSegmentCacheSize()
+        });
 
         // get server configurations
         var serverConfigs = configManager.GetUsenetServers();
@@ -106,8 +109,11 @@ public class UsenetStreamingClient : IDisposable, IAsyncDisposable
         // when config changes, update the servers
         configManager.OnConfigChanged += _configChangedHandler;
 
-        // wrap with caching
-        var cache = new MemoryCache(new MemoryCacheOptions() { SizeLimit = 8192 });
+        // MEDIUM-2 FIX: Wrap with caching using configurable cache size
+        var cache = new MemoryCache(new MemoryCacheOptions()
+        {
+            SizeLimit = configManager.GetArticleCacheSize()
+        });
         _client = new CachingNntpClient(_multiServerClient, cache);
     }
 

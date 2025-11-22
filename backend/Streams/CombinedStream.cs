@@ -121,8 +121,55 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams) : Stream
     public override async ValueTask DisposeAsync()
     {
         if (Interlocked.CompareExchange(ref _isDisposed, 1, 0) == 1) return;
-        if (_currentStream != null) await _currentStream.DisposeAsync();
-        _streams.Dispose();
-        GC.SuppressFinalize(this);
+
+        try
+        {
+            // MEDIUM-1 FIX: Dispose current stream
+            if (_currentStream != null)
+            {
+                await _currentStream.DisposeAsync();
+                _currentStream = null;
+            }
+
+            // MEDIUM-1 FIX: Dispose any remaining streams in the enumerator
+            // This handles pre-fetched Task<Stream> items that haven't been consumed yet
+            var remainingStreamTasks = new List<Task<Stream>>();
+            while (_streams.MoveNext())
+            {
+                remainingStreamTasks.Add(_streams.Current);
+            }
+
+            // Dispose the enumerator first
+            _streams.Dispose();
+
+            // Now await and dispose the remaining streams with timeout
+            foreach (var streamTask in remainingStreamTasks)
+            {
+                try
+                {
+                    // Give each stream a short timeout to avoid hanging
+                    // Use Task.WaitAsync (available in .NET 6+)
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    var stream = await streamTask.WaitAsync(cts.Token);
+                    await stream.DisposeAsync();
+                }
+                catch (OperationCanceledException)
+                {
+                    // Stream task timed out - log but continue
+                    System.Diagnostics.Debug.WriteLine("Stream task timed out during disposal");
+                }
+                catch (Exception ex)
+                {
+                    // Best effort cleanup - log but don't fail
+                    System.Diagnostics.Debug.WriteLine($"Error disposing stream: {ex.Message}");
+                }
+            }
+
+            GC.SuppressFinalize(this);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"CombinedStream disposal error: {ex.Message}");
+        }
     }
 }

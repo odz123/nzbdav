@@ -179,8 +179,6 @@ public class QueueManager : IDisposable
     {
         while (!ct.IsCancellationRequested)
         {
-            // BUG FIX NEW-008: Ensure CancellationTokenSource is properly disposed even on exceptions
-            CancellationTokenSource? queueItemCancellationTokenSource = null;
             try
             {
                 // get the next queue-item from the database
@@ -195,15 +193,17 @@ public class QueueManager : IDisposable
                     continue;
                 }
 
-                // process the queue-item
-                queueItemCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                await LockAsync(() =>
+                // LOW-2 FIX: Use 'using' statement to ensure CancellationTokenSource is disposed
+                using (var queueItemCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(ct))
                 {
-                    _inProgressQueueItem = BeginProcessingQueueItem(
-                        dbClient, topItem.queueItem, topItem.queueNzbContents, queueItemCancellationTokenSource
-                    );
-                });
-                await (_inProgressQueueItem?.ProcessingTask ?? Task.CompletedTask);
+                    await LockAsync(() =>
+                    {
+                        _inProgressQueueItem = BeginProcessingQueueItem(
+                            dbClient, topItem.queueItem, topItem.queueNzbContents, queueItemCancellationTokenSource
+                        );
+                    });
+                    await (_inProgressQueueItem?.ProcessingTask ?? Task.CompletedTask);
+                } // CTS disposed here automatically
             }
             catch (Exception e)
             {
@@ -211,7 +211,6 @@ public class QueueManager : IDisposable
             }
             finally
             {
-                queueItemCancellationTokenSource?.Dispose();
                 await LockAsync(() => { _inProgressQueueItem = null; });
             }
         }

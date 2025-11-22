@@ -8,10 +8,11 @@ using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Config;
 
-public class ConfigManager
+public class ConfigManager : IDisposable
 {
     private readonly ConcurrentDictionary<string, string> _config = new();
     private readonly SemaphoreSlim _configLock = new(1, 1);
+    private bool _disposed = false;
     public event EventHandler<ConfigEventArgs>? OnConfigChanged;
 
     public async Task LoadConfig()
@@ -393,6 +394,52 @@ public class ConfigManager
                changedConfig.ContainsKey("usenet.user") ||
                changedConfig.ContainsKey("usenet.pass") ||
                changedConfig.ContainsKey("usenet.connections");
+    }
+
+    /// <summary>
+    /// Get segment cache size for healthy segment tracking.
+    /// MEDIUM-2 FIX: Make cache sizes configurable via environment variables.
+    /// </summary>
+    public int GetSegmentCacheSize()
+    {
+        var value = StringUtil.EmptyToNull(GetConfigValue("cache.segment-cache-size"))
+            ?? Environment.GetEnvironmentVariable("SEGMENT_CACHE_SIZE")
+            ?? "50000";
+
+        if (!int.TryParse(value, out var result))
+            result = 50000;
+
+        // Clamp to reasonable values: 1K to 200K entries
+        return Math.Clamp(result, 1000, 200000);
+    }
+
+    /// <summary>
+    /// Get article cache size for caching NNTP responses.
+    /// MEDIUM-2 FIX: Make cache sizes configurable via environment variables.
+    /// </summary>
+    public int GetArticleCacheSize()
+    {
+        var value = StringUtil.EmptyToNull(GetConfigValue("cache.article-cache-size"))
+            ?? Environment.GetEnvironmentVariable("ARTICLE_CACHE_SIZE")
+            ?? "8192";
+
+        if (!int.TryParse(value, out var result))
+            result = 8192;
+
+        // Clamp to reasonable values: 100 to 50K entries
+        return Math.Clamp(result, 100, 50000);
+    }
+
+    /// <summary>
+    /// Dispose of resources.
+    /// LOW-1 FIX: Properly dispose SemaphoreSlim.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+
+        _configLock?.Dispose();
+        _disposed = true;
     }
 
     public class ConfigEventArgs : EventArgs

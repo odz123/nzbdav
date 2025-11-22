@@ -209,6 +209,13 @@ class Program
         app.UseWebdavBasicAuthentication();
         app.UseNWebDav();
         app.Lifetime.ApplicationStopping.Register(SigtermUtil.Cancel);
+
+        // LOW-1 FIX: Dispose ConfigManager on shutdown
+        app.Lifetime.ApplicationStopping.Register(() =>
+        {
+            configManager?.Dispose();
+        });
+
         await app.RunAsync();
     }
 }
