@@ -1,7 +1,7 @@
 import pageStyles from "../../route.module.css"
 import { ActionButton } from "../action-button/action-button"
 import { PageRow, PageTable } from "../page-table/page-table"
-import { useCallback, useState } from "react"
+import { useCallback, useState, memo, useMemo } from "react"
 import { ConfirmModal } from "../confirm-modal/confirm-modal"
 import { Link } from "react-router"
 import { type TriCheckboxState } from "../tri-checkbox/tri-checkbox"
@@ -20,17 +20,20 @@ export function HistoryTable({ historySlots, onIsSelectedChanged, onIsRemovingCh
     var selectedCount = historySlots.filter(x => !!x.isSelected).length;
     var headerCheckboxState: TriCheckboxState = selectedCount === 0 ? 'none' : selectedCount === historySlots.length ? 'all' : 'some';
 
+    // PERF FIX NEW-009: Optimize Set creation - compute nzo_ids once
+    const allNzoIds = useMemo(() => historySlots.map(x => x.nzo_id), [historySlots]);
+
     const onSelectAll = useCallback((isSelected: boolean) => {
-        onIsSelectedChanged(new Set<string>(historySlots.map(x => x.nzo_id)), isSelected);
-    }, [historySlots, onIsSelectedChanged]);
+        onIsSelectedChanged(new Set<string>(allNzoIds), isSelected);
+    }, [allNzoIds, onIsSelectedChanged]);
 
     const onRemove = useCallback(() => {
         setIsConfirmingRemoval(true);
-    }, [setIsConfirmingRemoval]);
+    }, []);
 
     const onCancelRemoval = useCallback(() => {
         setIsConfirmingRemoval(false);
-    }, [setIsConfirmingRemoval]);
+    }, []);
 
     const onConfirmRemoval = useCallback(async (deleteCompletedFiles?: boolean) => {
         var nzo_ids = new Set<string>(historySlots.filter(x => !!x.isSelected).map(x => x.nzo_id));
@@ -54,7 +57,20 @@ export function HistoryTable({ historySlots, onIsSelectedChanged, onIsRemovingCh
             }
         } catch { }
         onIsRemovingChanged(nzo_ids, false);
-    }, [historySlots, setIsConfirmingRemoval, onIsRemovingChanged, onRemoved]);
+    }, [historySlots, onIsRemovingChanged, onRemoved]);
+
+    // PERF FIX NEW-001: Create stable callbacks for row handlers to prevent re-renders
+    const handleRowSelected = useCallback((id: string, isSelected: boolean) => {
+        onIsSelectedChanged(new Set<string>([id]), isSelected);
+    }, [onIsSelectedChanged]);
+
+    const handleRowRemoving = useCallback((id: string, isRemoving: boolean) => {
+        onIsRemovingChanged(new Set<string>([id]), isRemoving);
+    }, [onIsRemovingChanged]);
+
+    const handleRowRemoved = useCallback((id: string) => {
+        onRemoved(new Set<string>([id]));
+    }, [onRemoved]);
 
     return (
         <>
@@ -69,9 +85,9 @@ export function HistoryTable({ historySlots, onIsSelectedChanged, onIsRemovingCh
                     <HistoryRow
                         key={slot.nzo_id}
                         slot={slot}
-                        onIsSelectedChanged={(id, isSelected) => onIsSelectedChanged(new Set<string>([id]), isSelected)}
-                        onIsRemovingChanged={(id, isRemoving) => onIsRemovingChanged(new Set<string>([id]), isRemoving)}
-                        onRemoved={(id) => onRemoved(new Set([id]))}
+                        onIsSelectedChanged={handleRowSelected}
+                        onIsRemovingChanged={handleRowRemoving}
+                        onRemoved={handleRowRemoved}
                     />
                 )}
             </PageTable>
@@ -95,7 +111,8 @@ type HistoryRowProps = {
     onRemoved: (nzo_id: string) => void
 }
 
-export function HistoryRow({ slot, onIsSelectedChanged, onIsRemovingChanged, onRemoved }: HistoryRowProps) {
+// PERF FIX NEW-004: Add React.memo to prevent unnecessary re-renders
+export const HistoryRow = memo(function HistoryRow({ slot, onIsSelectedChanged, onIsRemovingChanged, onRemoved }: HistoryRowProps) {
     // state
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
 
@@ -150,7 +167,7 @@ export function HistoryRow({ slot, onIsSelectedChanged, onIsRemovingChanged, onR
                 onCancel={onCancelRemoval} />
         </>
     )
-}
+});
 
 export function Actions({ slot, onRemove }: { slot: PresentationHistorySlot, onRemove: () => void }) {
     // determine explore action link url

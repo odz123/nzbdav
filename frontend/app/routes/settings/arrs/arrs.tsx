@@ -1,6 +1,6 @@
 import { Button, Form, Card, InputGroup, Spinner } from "react-bootstrap";
 import styles from "./arrs.module.css"
-import { type Dispatch, type SetStateAction, useState, useCallback, useEffect } from "react";
+import { type Dispatch, type SetStateAction, useState, useCallback, useEffect, useMemo } from "react";
 
 type ArrsSettingsProps = {
     config: Record<string, string>
@@ -79,7 +79,8 @@ const queueStatusMessages = [
 ];
 
 export function ArrsSettings({ config, setNewConfig }: ArrsSettingsProps) {
-    const arrConfig = JSON.parse(config["arr.instances"]);
+    // PERF FIX NEW-008: Add useMemo for JSON.parse to prevent re-parsing on every render
+    const arrConfig = useMemo(() => JSON.parse(config["arr.instances"]), [config["arr.instances"]]);
 
     const updateConfig = useCallback((newArrConfig: ArrConfig) => {
         setNewConfig({ ...config, "arr.instances": JSON.stringify(newArrConfig) });

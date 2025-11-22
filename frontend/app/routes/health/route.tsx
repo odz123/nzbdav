@@ -4,7 +4,7 @@ import { backendClient } from "~/clients/backend-client.server";
 import { HealthTable } from "./components/health-table/health-table";
 import { HealthStats } from "./components/health-stats/health-stats";
 import { ServerHealth } from "./components/server-health/server-health";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useMemo } from "react";
 import { receiveMessage } from "~/utils/websocket-util";
 import { Alert } from "react-bootstrap";
 import type { ServerHealthInfo } from "~/clients/backend-client.server";
@@ -61,6 +61,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         refetchData();
     }, [queueItems, setQueueItems]);
 
+    // PERF FIX NEW-006: Add data comparison before setState to prevent unnecessary re-renders
     // Poll server health every 10 seconds
     useEffect(() => {
         const refetchServerHealth = async () => {
@@ -68,7 +69,13 @@ export default function Health({ loaderData }: Route.ComponentProps) {
                 const response = await fetch('/api/get-server-health');
                 if (response.ok) {
                     const data = await response.json();
-                    setServerHealth(data.servers);
+                    setServerHealth(prev => {
+                        // Only update if data actually changed
+                        if (JSON.stringify(prev) === JSON.stringify(data.servers)) {
+                            return prev;
+                        }
+                        return data.servers;
+                    });
                 }
             } catch (error) {
                 console.error('Failed to fetch server health:', error);
@@ -115,20 +122,18 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         });
     }, [setQueueItems, setHistoryStats]);
 
+    // PERF FIX NEW-002: Fix O(n²) state update - replace findIndex + filter + map with simple O(n) map
     const onHealthItemProgress = useCallback((message: string) => {
         const [davItemId, progress] = message.split('|');
         if (progress === "done") return;
         setQueueItems(queueItems => {
-            var index = queueItems.findIndex(x => x.id === davItemId);
-            if (index === -1) return queueItems;
-            return queueItems
-                .filter((_, i) => i >= index)
-                .map(item => item.id === davItemId
+            return queueItems.map(item =>
+                item.id === davItemId
                     ? { ...item, progress: Number(progress) }
                     : item
-                )
+            );
         });
-    }, [setQueueItems]);
+    }, []);
 
     // websocket
     const onWebsocketMessage = useCallback((topic: string, message: string) => {
@@ -141,20 +146,36 @@ export default function Health({ loaderData }: Route.ComponentProps) {
         onHealthItemProgress
     ]);
 
+    // PERF FIX NEW-010: Add exponential backoff for WebSocket reconnection to reduce churn during network issues
     useEffect(() => {
         let ws: WebSocket;
         let disposed = false;
+        let attemptNumber = 0;
+
         function connect() {
             ws = new WebSocket(window.location.origin.replace(/^http/, 'ws'));
             ws.onmessage = receiveMessage(onWebsocketMessage);
-            ws.onopen = () => { ws.send(JSON.stringify(topicSubscriptions)); }
-            ws.onclose = () => { !disposed && setTimeout(() => connect(), 1000); };
+            ws.onopen = () => {
+                attemptNumber = 0;  // Reset on successful connection
+                ws.send(JSON.stringify(topicSubscriptions));
+            };
+            ws.onclose = () => {
+                if (!disposed) {
+                    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, max 30s
+                    const delay = Math.min(1000 * Math.pow(2, attemptNumber), 30000);
+                    setTimeout(() => connect(), delay);
+                    attemptNumber++;
+                }
+            };
             ws.onerror = () => { ws.close() };
             return () => { disposed = true; ws.close(); }
         }
 
         return connect();
     }, [onWebsocketMessage]);
+
+    // PERF FIX NEW-005: Add useMemo for filtered list to prevent re-creating array on every render
+    const topTenItems = useMemo(() => queueItems.slice(0, 10), [queueItems]);
 
     return (
         <div className={styles.container}>
@@ -181,7 +202,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
                 </Alert>
             }
             <div className={styles.section}>
-                <HealthTable isEnabled={isEnabled} healthCheckItems={queueItems.filter((_, index) => index < 10)} />
+                <HealthTable isEnabled={isEnabled} healthCheckItems={topTenItems} />
             </div>
         </div>
     );

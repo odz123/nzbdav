@@ -1,4 +1,5 @@
-﻿using System.Collections.Concurrent;
+﻿using System.Buffers;
+using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text;
 using Microsoft.AspNetCore.Http;
@@ -13,6 +14,9 @@ public class WebsocketManager
     // Use ConcurrentDictionary as a concurrent set (value is ignored, only key matters)
     private readonly ConcurrentDictionary<WebSocket, byte> _authenticatedSockets = new();
     private readonly ConcurrentDictionary<WebsocketTopic, string> _lastMessage = new();
+
+    // PERF FIX NEW-011: Use ArrayPool to reduce allocations in WebSocket message sending
+    private static readonly ArrayPool<byte> _bytePool = ArrayPool<byte>.Shared;
 
     public async Task HandleRoute(HttpContext context)
     {
@@ -53,9 +57,28 @@ public class WebsocketManager
     {
         _lastMessage[topic] = message;
         var topicMessage = new TopicMessage(topic, message);
-        var bytes = new ArraySegment<byte>(Encoding.UTF8.GetBytes(topicMessage.ToJson()));
-        // Get snapshot of keys (websockets) from concurrent dictionary
-        return Task.WhenAll(_authenticatedSockets.Keys.Select(x => SendMessage(x, bytes)));
+        var json = topicMessage.ToJson();
+
+        // PERF FIX NEW-011: Use ArrayPool for byte buffers to reduce GC pressure
+        var maxByteCount = Encoding.UTF8.GetMaxByteCount(json.Length);
+        var buffer = _bytePool.Rent(maxByteCount);
+        try
+        {
+            var actualByteCount = Encoding.UTF8.GetBytes(json, 0, json.Length, buffer, 0);
+            var bytes = new ArraySegment<byte>(buffer, 0, actualByteCount);
+
+            // PERF FIX NEW-012: Replace LINQ with direct iteration to avoid enumerator allocation
+            var tasks = new List<Task>(_authenticatedSockets.Count);
+            foreach (var kvp in _authenticatedSockets)
+            {
+                tasks.Add(SendMessage(kvp.Key, bytes));
+            }
+            return Task.WhenAll(tasks);
+        }
+        finally
+        {
+            _bytePool.Return(buffer);
+        }
     }
 
     /// <summary>

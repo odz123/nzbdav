@@ -1,7 +1,7 @@
 import pageStyles from "../../route.module.css"
 import { ActionButton } from "../action-button/action-button"
 import { PageRow, PageTable } from "../page-table/page-table"
-import { useCallback, useState } from "react"
+import { useCallback, useState, memo, useMemo } from "react"
 import { ConfirmModal } from "../confirm-modal/confirm-modal"
 import type { PresentationQueueSlot } from "../../route"
 import type { TriCheckboxState } from "../tri-checkbox/tri-checkbox"
@@ -18,17 +18,20 @@ export function QueueTable({ queueSlots, onIsSelectedChanged, onIsRemovingChange
     var selectedCount = queueSlots.filter(x => !!x.isSelected).length;
     var headerCheckboxState: TriCheckboxState = selectedCount === 0 ? 'none' : selectedCount === queueSlots.length ? 'all' : 'some';
 
+    // PERF FIX NEW-009: Optimize Set creation - compute nzo_ids once
+    const allNzoIds = useMemo(() => queueSlots.map(x => x.nzo_id), [queueSlots]);
+
     const onSelectAll = useCallback((isSelected: boolean) => {
-        onIsSelectedChanged(new Set<string>(queueSlots.map(x => x.nzo_id)), isSelected);
-    }, [queueSlots, onIsSelectedChanged]);
+        onIsSelectedChanged(new Set<string>(allNzoIds), isSelected);
+    }, [allNzoIds, onIsSelectedChanged]);
 
     const onRemove = useCallback(() => {
         setIsConfirmingRemoval(true);
-    }, [setIsConfirmingRemoval]);
+    }, []);
 
     const onCancelRemoval = useCallback(() => {
         setIsConfirmingRemoval(false);
-    }, [setIsConfirmingRemoval]);
+    }, []);
 
     const onConfirmRemoval = useCallback(async () => {
         var nzo_ids = new Set<string>(queueSlots.filter(x => !!x.isSelected).map(x => x.nzo_id));
@@ -52,7 +55,20 @@ export function QueueTable({ queueSlots, onIsSelectedChanged, onIsRemovingChange
             }
         } catch { }
         onIsRemovingChanged(nzo_ids, false);
-    }, [queueSlots, setIsConfirmingRemoval, onIsRemovingChanged, onRemoved]);
+    }, [queueSlots, onIsRemovingChanged, onRemoved]);
+
+    // PERF FIX NEW-001: Create stable callbacks for row handlers to prevent re-renders
+    const handleRowSelected = useCallback((id: string, isSelected: boolean) => {
+        onIsSelectedChanged(new Set<string>([id]), isSelected);
+    }, [onIsSelectedChanged]);
+
+    const handleRowRemoving = useCallback((id: string, isRemoving: boolean) => {
+        onIsRemovingChanged(new Set<string>([id]), isRemoving);
+    }, [onIsRemovingChanged]);
+
+    const handleRowRemoved = useCallback((id: string) => {
+        onRemoved(new Set<string>([id]));
+    }, [onRemoved]);
 
     return (
         <>
@@ -68,9 +84,9 @@ export function QueueTable({ queueSlots, onIsSelectedChanged, onIsRemovingChange
                         <QueueRow
                             key={slot.nzo_id}
                             slot={slot}
-                            onIsSelectedChanged={(id, isSelected) => onIsSelectedChanged(new Set<string>([id]), isSelected)}
-                            onIsRemovingChanged={(id, isRemoving) => onIsRemovingChanged(new Set<string>([id]), isRemoving)}
-                            onRemoved={(id) => onRemoved(new Set([id]))}
+                            onIsSelectedChanged={handleRowSelected}
+                            onIsRemovingChanged={handleRowRemoving}
+                            onRemoved={handleRowRemoved}
                         />
                     )}
                 </PageTable>
@@ -93,7 +109,8 @@ type QueueRowProps = {
     onRemoved: (nzo_id: string) => void
 }
 
-export function QueueRow({ slot, onIsSelectedChanged, onIsRemovingChanged, onRemoved }: QueueRowProps) {
+// PERF FIX NEW-004: Add React.memo to prevent unnecessary re-renders
+export const QueueRow = memo(function QueueRow({ slot, onIsSelectedChanged, onIsRemovingChanged, onRemoved }: QueueRowProps) {
     // state
     const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
 
@@ -146,4 +163,4 @@ export function QueueRow({ slot, onIsSelectedChanged, onIsRemovingChanged, onRem
                 onCancel={onCancelRemoval} />
         </>
     )
-}
+});
