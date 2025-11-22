@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using NzbWebDAV.Config;
 using NzbWebDAV.Database;
 using NzbWebDAV.Database.Models;
+using NzbWebDAV.Utils;
 
 namespace NzbWebDAV.Api.Controllers.UpdateConfig;
 
@@ -62,6 +63,22 @@ public class UpdateConfigController(DavDatabaseClient dbClient, ConfigManager co
         var existingItems = await dbClient.Ctx.ConfigItems
             .Where(c => configNames.Contains(c.ConfigName))
             .ToListAsync(HttpContext.RequestAborted);
+
+        // 1.5. Hash passwords before storing (security requirement)
+        foreach (var item in request.ConfigItems)
+        {
+            if (item.ConfigName == "webdav.pass" && !string.IsNullOrWhiteSpace(item.ConfigValue))
+            {
+                // Validate minimum password length (8 characters)
+                if (item.ConfigValue.Length < 8)
+                {
+                    throw new BadHttpRequestException("WebDAV password must be at least 8 characters long");
+                }
+                // Hash the password before storing
+                item.ConfigValue = PasswordUtil.Hash(item.ConfigValue);
+                logger.LogInformation("WebDAV password updated and hashed");
+            }
+        }
 
         // 2. Split the items into those that need to be updated and those that need to be inserted
         var existingItemsDict = existingItems.ToDictionary(i => i.ConfigName);

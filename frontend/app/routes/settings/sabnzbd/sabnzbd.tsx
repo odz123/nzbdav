@@ -1,6 +1,6 @@
 import { Button, Form, InputGroup } from "react-bootstrap";
 import styles from "./sabnzbd.module.css"
-import { useCallback, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useState, type Dispatch, type SetStateAction } from "react";
 import { className } from "~/utils/styling";
 import { isPositiveInteger } from "../usenet/usenet";
 
@@ -10,6 +10,7 @@ type SabnzbdSettingsProps = {
 };
 
 export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
+    const [showApiKey, setShowApiKey] = useState(false);
 
     const onRefreshApiKey = useCallback(() => {
         setNewConfig({ ...config, "api.key": generateNewApiKey() })
@@ -21,11 +22,14 @@ export function SabnzbdSettings({ config, setNewConfig }: SabnzbdSettingsProps) 
                 <Form.Label htmlFor="api-key-input">API Key</Form.Label>
                 <InputGroup className={styles.input}>
                     <Form.Control
-                        type="text"
+                        type={showApiKey ? "text" : "password"}
                         id="api-key-input"
                         aria-describedby="api-key-help"
                         value={config["api.key"]}
                         readOnly />
+                    <Button variant="secondary" onClick={() => setShowApiKey(!showApiKey)}>
+                        {showApiKey ? "Hide" : "Show"}
+                    </Button>
                     <Button variant="primary" onClick={onRefreshApiKey}>
                         Refresh
                     </Button>

@@ -37,15 +37,19 @@ docker run --rm -it -p 3000:3000 nzbdav/nzbdav:alpha
 
 And if you would like to persist saved settings, attach a volume at `/config`
 
-```
+```bash
 mkdir -p $(pwd)/nzbdav && \
 docker run --rm -it \
   -v $(pwd)/nzbdav:/config \
   -e PUID=1000 \
   -e PGID=1000 \
+  -e SESSION_KEY=$(openssl rand -hex 32) \
   -p 3000:3000 \
   nzbdav/nzbdav:alpha
 ```
+
+> **Important**: Set `SESSION_KEY` to persist user sessions across container restarts. Without it, users will be logged out when the container restarts. Generate a secure key with `openssl rand -hex 32`.
+
 After starting the container, be sure to navigate to the Settings page on the UI to finish setting up your usenet connection settings.
 
 <p align="center">
@@ -154,6 +158,7 @@ services:
     environment:
       - PUID=1000
       - PGID=1000
+      - SESSION_KEY=your-secret-key-here-generate-with-openssl-rand-hex-32
     ports:
       - 3000:3000
     volumes:

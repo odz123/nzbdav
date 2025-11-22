@@ -1,6 +1,6 @@
 import type { Route } from "./+types/route";
 import styles from "./route.module.css"
-import { Tabs, Tab, Button, Form } from "react-bootstrap"
+import { Tabs, Tab, Button, Form, Alert } from "react-bootstrap"
 import { backendClient } from "~/clients/backend-client.server";
 import { isUsenetSettingsUpdated, UsenetSettings } from "./usenet/usenet-multi";
 import React, { useEffect } from "react";
@@ -78,6 +78,7 @@ function Body(props: BodyProps) {
     const [isUsenetSettingsReadyToSave, setIsUsenetSettingsReadyToSave] = React.useState(false);
     const [isSaving, setIsSaving] = React.useState(false);
     const [isSaved, setIsSaved] = React.useState(false);
+    const [saveError, setSaveError] = React.useState<string | null>(null);
     const [activeTab, setActiveTab] = React.useState('usenet');
 
     // derived variables
@@ -120,24 +121,41 @@ function Body(props: BodyProps) {
     const onSave = React.useCallback(async () => {
         setIsSaving(true);
         setIsSaved(false);
-        const response = await fetch("/settings/update", {
-            method: "POST",
-            body: (() => {
-                const form = new FormData();
-                const changedConfig = getChangedConfig(config, newConfig);
-                form.append("config", JSON.stringify(changedConfig));
-                return form;
-            })()
-        });
-        if (response.ok) {
-            setConfig(newConfig);
+        setSaveError(null);
+        try {
+            const response = await fetch("/settings/update", {
+                method: "POST",
+                body: (() => {
+                    const form = new FormData();
+                    const changedConfig = getChangedConfig(config, newConfig);
+                    form.append("config", JSON.stringify(changedConfig));
+                    return form;
+                })()
+            });
+
+            if (response.ok) {
+                setConfig(newConfig);
+                setIsSaved(true);
+            } else {
+                // Try to parse error message from response
+                const errorData = await response.json().catch(() => ({ error: `Server returned status ${response.status}` }));
+                setSaveError(errorData.error || errorData.message || `Failed to save settings (status ${response.status})`);
+            }
+        } catch (error) {
+            setSaveError(error instanceof Error ? error.message : "Failed to save settings. Please check your connection and try again.");
+        } finally {
+            setIsSaving(false);
         }
-        setIsSaving(false);
-        setIsSaved(true);
-    }, [config, newConfig, setIsSaving, setIsSaved, setConfig]);
+    }, [config, newConfig, setIsSaving, setIsSaved, setSaveError, setConfig]);
 
     return (
         <div className={styles.container}>
+            {saveError && (
+                <Alert variant="danger" dismissible onClose={() => setSaveError(null)} className={styles.alert}>
+                    <Alert.Heading>Error Saving Settings</Alert.Heading>
+                    <p>{saveError}</p>
+                </Alert>
+            )}
             <Tabs
                 activeKey={activeTab}
                 onSelect={x => setActiveTab(x!)}
@@ -189,6 +207,11 @@ function getChangedConfig(
     let configKeys = Object.keys(defaultConfig);
     for (const configKey of configKeys) {
         if (config[configKey] !== newConfig[configKey]) {
+            // Special handling for password fields: only send if non-empty
+            // Empty password means "keep current password"
+            if (configKey === "webdav.pass" && !newConfig[configKey]) {
+                continue; // Skip empty passwords
+            }
             changedConfig[configKey] = newConfig[configKey];
         }
     }

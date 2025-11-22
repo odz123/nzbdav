@@ -8,9 +8,10 @@ type ServerListProps = {
     onDelete: (serverId: string) => void;
     onToggleEnabled: (serverId: string, enabled: boolean) => void;
     onTest: (server: UsenetServerConfig) => void;
+    testingServerId?: string | null;
 };
 
-export function ServerList({ servers, onEdit, onDelete, onToggleEnabled, onTest }: ServerListProps) {
+export function ServerList({ servers, onEdit, onDelete, onToggleEnabled, onTest, testingServerId }: ServerListProps) {
     const sortedServers = [...servers].sort((a, b) => a.priority - b.priority);
 
     if (servers.length === 0) {
@@ -76,8 +77,9 @@ export function ServerList({ servers, onEdit, onDelete, onToggleEnabled, onTest 
                                     size="sm"
                                     variant="outline-primary"
                                     onClick={() => onTest(server)}
+                                    disabled={testingServerId === server.id}
                                 >
-                                    Test
+                                    {testingServerId === server.id ? "Testing..." : "Test"}
                                 </Button>
                                 <Button
                                     size="sm"
