@@ -49,7 +49,14 @@ namespace NzbWebDAV.Par2Recovery.Packets
             if (input.Length == 0)
                 return false;
 
-            // TODO: Check for a BOM.
+            // Check for UTF-8 BOM (0xEF 0xBB 0xBF)
+            if (input.Length >= 3 &&
+                input[0] == 0xEF &&
+                input[1] == 0xBB &&
+                input[2] == 0xBF)
+            {
+                return true; // UTF-8 BOM detected
+            }
 
             for (int i = 0; i < input.Length; i++)
             {
