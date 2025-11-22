@@ -89,11 +89,11 @@ public class NzbFileStream(
         // Find the largest cache entry where the key is <= byteOffset and range contains offset
         var cachedResult = _segmentCache
             .Where(kvp => kvp.Key <= byteOffset && kvp.Value.FoundByteRange.Contains(byteOffset))
-            .Select(kvp => (InterpolationSearch.Result?)kvp.Value)
+            .Select(kvp => kvp.Value)
             .LastOrDefault();
 
-        if (cachedResult.HasValue)
-            return cachedResult.Value;
+        if (cachedResult != default)
+            return cachedResult;
 
         // Not in cache, perform the search
         var result = await InterpolationSearch.Find(
