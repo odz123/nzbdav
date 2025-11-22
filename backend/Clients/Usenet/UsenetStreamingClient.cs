@@ -65,15 +65,34 @@ public class UsenetStreamingClient
             if (!configManager.HasUsenetConfigChanged(configEventArgs.ChangedConfig))
                 return;
 
-            // update server configurations
-            // Note: UpdateServersAsync will call ResetAllServerHealth which fires
-            // OnAllServersHealthReset event, which will clear the segment cache
-            var newServerConfigs = configManager.GetUsenetServers();
-            if (_multiServerClient != null)
+            try
             {
-                await _multiServerClient.UpdateServersAsync(newServerConfigs);
-                // No need to call SetupConnectionPoolMonitoring - the event is already subscribed
-                // and InitializeServers in MultiServerNntpClient will fire the initial event
+                // update server configurations
+                // Note: UpdateServersAsync will call ResetAllServerHealth which fires
+                // OnAllServersHealthReset event, which will clear the segment cache
+                var newServerConfigs = configManager.GetUsenetServers();
+
+                // Validate that we have at least one server before updating
+                if (newServerConfigs.Count == 0)
+                {
+                    Serilog.Log.Error("Server configuration update returned zero servers - keeping existing servers to prevent breaking streams");
+                    return;
+                }
+
+                if (_multiServerClient != null)
+                {
+                    await _multiServerClient.UpdateServersAsync(newServerConfigs);
+                    // No need to call SetupConnectionPoolMonitoring - the event is already subscribed
+                    // and InitializeServers in MultiServerNntpClient will fire the initial event
+                }
+            }
+            catch (Exception ex)
+            {
+                // BUG FIX: If server config update fails, log but don't break existing connections
+                // This prevents streams from breaking when config has temporary issues
+                Serilog.Log.Error(ex,
+                    "Failed to update server configurations - keeping existing servers to prevent breaking streams. " +
+                    "Please check your Usenet server configuration.");
             }
         };
     }

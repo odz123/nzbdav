@@ -491,6 +491,24 @@ public class MultiServerNntpClient : INntpClient
         await _updateLock.WaitAsync();
         try
         {
+            // BUG FIX: Validate new configuration before clearing old servers
+            // Filter to get the actual servers that will be initialized
+            var configsToInitialize = newServerConfigs
+                .Where(s => s.Enabled)
+                .OrderBy(s => s.Priority)
+                .ThenBy(s => s.Name)
+                .ToList();
+
+            // If no valid servers in new config, keep existing servers and log error
+            if (configsToInitialize.Count == 0)
+            {
+                _logger?.LogError(
+                    "UpdateServersAsync called with zero enabled servers - " +
+                    "keeping existing {Count} servers to prevent breaking streams",
+                    _servers.Count);
+                return;
+            }
+
             var oldServers = _servers.ToList();
             _servers.Clear();
 
