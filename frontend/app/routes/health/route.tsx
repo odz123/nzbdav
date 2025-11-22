@@ -78,7 +78,7 @@ export default function Health({ loaderData }: Route.ComponentProps) {
                     });
                 }
             } catch (error) {
-                console.error('Failed to fetch server health:', error);
+                // Failed to fetch health data, keep previous state
             }
         };
 

@@ -5,6 +5,7 @@ import { useState } from "react";
 import { backendClient } from "~/clients/backend-client.server";
 import { Form, redirect, useNavigation } from "react-router";
 import { isAuthenticated, setSessionUser } from "~/auth/authentication.server";
+import { className } from "~/utils/styling";
 
 type OnboardingPageData = {
     error: string
@@ -76,12 +77,18 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
                     value={username}
                     onChange={e => setUsername(e.currentTarget.value)} />
                 <BootstrapForm.Control
+                    {...className([
+                        password.length > 0 && password.length < MIN_PASSWORD_LENGTH && styles.error
+                    ])}
                     name="password"
                     type="password"
                     placeholder="Password"
                     value={password}
                     onChange={e => setPassword(e.currentTarget.value)} />
                 <BootstrapForm.Control
+                    {...className([
+                        confirmPassword.length > 0 && password !== confirmPassword && styles.error
+                    ])}
                     type="password"
                     placeholder="Confirm Password"
                     value={confirmPassword}

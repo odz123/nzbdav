@@ -1,4 +1,4 @@
-import { Button, Alert } from "react-bootstrap";
+import { Button, Alert, Toast, ToastContainer, Modal } from "react-bootstrap";
 import styles from "./usenet.module.css";
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { ServerList } from "./components/server-list/server-list";
@@ -25,7 +25,7 @@ function migrateLegacyConfig(config: Record<string, string>): UsenetServerConfig
                 return servers;
             }
         } catch (e) {
-            console.error("Failed to parse usenet.servers:", e);
+            // Failed to parse, fall back to legacy config below
         }
     }
 
@@ -51,11 +51,25 @@ function migrateLegacyConfig(config: Record<string, string>): UsenetServerConfig
     return [];
 }
 
+type TestResult = {
+    serverName: string;
+    success: boolean;
+    message: string;
+} | null;
+
+type DeleteConfirmation = {
+    serverId: string;
+    serverName: string;
+} | null;
+
 export function UsenetSettings({ config, setNewConfig, onReadyToSave }: UsenetSettingsProps) {
     const [servers, setServers] = useState<UsenetServerConfig[]>(() => migrateLegacyConfig(config));
     const [showModal, setShowModal] = useState(false);
     const [editingServer, setEditingServer] = useState<UsenetServerConfig | null>(null);
     const [hasChanges, setHasChanges] = useState(false);
+    const [testingServerId, setTestingServerId] = useState<string | null>(null);
+    const [testResult, setTestResult] = useState<TestResult>(null);
+    const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteConfirmation>(null);
 
     // Update parent config whenever servers change
     useEffect(() => {
@@ -89,10 +103,18 @@ export function UsenetSettings({ config, setNewConfig, onReadyToSave }: UsenetSe
     }, []);
 
     const handleDeleteServer = useCallback((serverId: string) => {
-        if (confirm("Are you sure you want to delete this server?")) {
-            setServers(prevServers => prevServers.filter(s => s.id !== serverId));
+        const server = servers.find(s => s.id === serverId);
+        if (server) {
+            setDeleteConfirmation({ serverId, serverName: server.name });
         }
-    }, []);
+    }, [servers]);
+
+    const confirmDelete = useCallback(() => {
+        if (deleteConfirmation) {
+            setServers(prevServers => prevServers.filter(s => s.id !== deleteConfirmation.serverId));
+            setDeleteConfirmation(null);
+        }
+    }, [deleteConfirmation]);
 
     const handleToggleEnabled = useCallback((serverId: string, enabled: boolean) => {
         setServers(prevServers =>
@@ -101,6 +123,7 @@ export function UsenetSettings({ config, setNewConfig, onReadyToSave }: UsenetSe
     }, []);
 
     const handleTestServer = useCallback(async (server: UsenetServerConfig) => {
+        setTestingServerId(server.id);
         try {
             const response = await fetch("/api/test-usenet-connection", {
                 method: "POST",
@@ -118,13 +141,21 @@ export function UsenetSettings({ config, setNewConfig, onReadyToSave }: UsenetSe
             const data = await response.json();
             const success = response.ok && data?.connected === true;
 
-            if (success) {
-                alert(`Connection to ${server.name} successful!`);
-            } else {
-                alert(`Connection to ${server.name} failed. Please check your credentials.`);
-            }
+            setTestResult({
+                serverName: server.name,
+                success,
+                message: success
+                    ? `Connection to ${server.name} successful!`
+                    : `Connection to ${server.name} failed. Please check your credentials.`
+            });
         } catch (error) {
-            alert(`Failed to test connection to ${server.name}.`);
+            setTestResult({
+                serverName: server.name,
+                success: false,
+                message: `Failed to test connection to ${server.name}.`
+            });
+        } finally {
+            setTestingServerId(null);
         }
     }, []);
 
@@ -178,6 +209,7 @@ export function UsenetSettings({ config, setNewConfig, onReadyToSave }: UsenetSe
                         onDelete={handleDeleteServer}
                         onToggleEnabled={handleToggleEnabled}
                         onTest={handleTestServer}
+                        testingServerId={testingServerId}
                     />
                 </>
             )}
@@ -215,6 +247,44 @@ export function UsenetSettings({ config, setNewConfig, onReadyToSave }: UsenetSe
                     </div>
                 </div>
             )}
+
+            {/* Toast for test results */}
+            <ToastContainer position="top-end" className="p-3">
+                <Toast
+                    show={testResult !== null}
+                    onClose={() => setTestResult(null)}
+                    delay={5000}
+                    autohide
+                    bg={testResult?.success ? "success" : "danger"}
+                >
+                    <Toast.Header>
+                        <strong className="me-auto">
+                            {testResult?.success ? "Connection Successful" : "Connection Failed"}
+                        </strong>
+                    </Toast.Header>
+                    <Toast.Body className="text-white">
+                        {testResult?.message}
+                    </Toast.Body>
+                </Toast>
+            </ToastContainer>
+
+            {/* Delete confirmation modal */}
+            <Modal show={deleteConfirmation !== null} onHide={() => setDeleteConfirmation(null)}>
+                <Modal.Header closeButton>
+                    <Modal.Title>Confirm Delete</Modal.Title>
+                </Modal.Header>
+                <Modal.Body>
+                    Are you sure you want to delete the server <strong>{deleteConfirmation?.serverName}</strong>?
+                </Modal.Body>
+                <Modal.Footer>
+                    <Button variant="secondary" onClick={() => setDeleteConfirmation(null)}>
+                        Cancel
+                    </Button>
+                    <Button variant="danger" onClick={confirmDelete}>
+                        Delete Server
+                    </Button>
+                </Modal.Footer>
+            </Modal>
         </div>
     );
 }
