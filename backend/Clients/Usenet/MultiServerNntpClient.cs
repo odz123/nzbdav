@@ -217,9 +217,31 @@ public class MultiServerNntpClient : INntpClient
 
     public async Task WaitForReady(CancellationToken cancellationToken)
     {
-        // Wait for all servers to be ready
-        var tasks = _servers.Select(s => s.Client.WaitForReady(cancellationToken));
-        await Task.WhenAll(tasks);
+        // HIGH-2 FIX: Add timeout to prevent indefinite hang if a server doesn't respond
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(30)); // Timeout if any server hangs
+
+        var tasks = _servers.Select(s => s.Client.WaitForReady(cts.Token));
+
+        try
+        {
+            await Task.WhenAll(tasks);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // User cancelled - rethrow original exception
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            // Timeout - log which servers didn't respond
+            var completedServers = tasks.Count(t => t.IsCompletedSuccessfully);
+            Serilog.Log.Error(
+                "WaitForReady timed out after 30 seconds. {Completed}/{Total} servers ready",
+                completedServers, _servers.Count);
+            throw new TimeoutException(
+                $"Server initialization timed out after 30 seconds. Only {completedServers}/{_servers.Count} servers ready.");
+        }
     }
 
     /// <summary>

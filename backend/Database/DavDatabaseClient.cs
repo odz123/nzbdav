@@ -58,16 +58,70 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
             SELECT IFNULL(SUM(FileSize), 0)
             FROM RecursiveChildren;
         ";
-        var connection = Ctx.Database.GetDbConnection();
-        if (connection.State != System.Data.ConnectionState.Open) await connection.OpenAsync(ct);
-        await using var command = connection.CreateCommand();
-        command.CommandText = sql;
-        var parameter = command.CreateParameter();
-        parameter.ParameterName = "@parentId";
-        parameter.Value = dirId;
-        command.Parameters.Add(parameter);
-        var result = await command.ExecuteScalarAsync(ct);
-        return Convert.ToInt64(result);
+
+        // HIGH-1 FIX: Add retry logic for transient database errors
+        const int maxRetries = 3;
+        var retryDelays = new[]
+        {
+            TimeSpan.FromMilliseconds(100),
+            TimeSpan.FromMilliseconds(500),
+            TimeSpan.FromSeconds(1)
+        };
+
+        for (int attempt = 0; attempt <= maxRetries; attempt++)
+        {
+            try
+            {
+                var connection = Ctx.Database.GetDbConnection();
+
+                // Ensure connection is open
+                if (connection.State != System.Data.ConnectionState.Open)
+                {
+                    await connection.OpenAsync(ct);
+                }
+
+                await using var command = connection.CreateCommand();
+                command.CommandText = sql;
+                command.CommandTimeout = 30; // 30 second timeout
+
+                var parameter = command.CreateParameter();
+                parameter.ParameterName = "@parentId";
+                parameter.Value = dirId;
+                command.Parameters.Add(parameter);
+
+                var result = await command.ExecuteScalarAsync(ct);
+                return Convert.ToInt64(result);
+            }
+            catch (Exception ex) when (
+                ex is System.Data.Common.DbException ||
+                ex is InvalidOperationException)
+            {
+                // Log the error
+                Serilog.Log.Warning(ex,
+                    "Database query failed for GetRecursiveSize (attempt {Attempt}/{MaxRetries}): {ErrorMessage}",
+                    attempt + 1, maxRetries + 1, ex.Message);
+
+                // If this was the last attempt, throw
+                if (attempt >= maxRetries)
+                {
+                    Serilog.Log.Error(ex,
+                        "Failed to calculate recursive size for directory {DirId} after {Retries} retries",
+                        dirId, maxRetries + 1);
+                    throw;
+                }
+
+                // Wait before retry (with cancellation support)
+                await Task.Delay(retryDelays[attempt], ct);
+            }
+            catch (OperationCanceledException)
+            {
+                // Don't retry on cancellation
+                throw;
+            }
+        }
+
+        // Should never reach here
+        throw new InvalidOperationException("Retry loop completed unexpectedly");
     }
 
     // nzbfile

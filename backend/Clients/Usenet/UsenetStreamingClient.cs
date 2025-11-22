@@ -12,7 +12,7 @@ using Usenet.Nzb;
 
 namespace NzbWebDAV.Clients.Usenet;
 
-public class UsenetStreamingClient : IDisposable
+public class UsenetStreamingClient : IDisposable, IAsyncDisposable
 {
     private readonly INntpClient _client;
     private readonly WebsocketManager _websocketManager;
@@ -42,8 +42,11 @@ public class UsenetStreamingClient : IDisposable
         _configManager = configManager;
         _logger = logger;
 
-        // initialize healthy segment cache (24 hour TTL, max 50,000 entries)
-        _healthySegmentCache = new MemoryCache(new MemoryCacheOptions() { SizeLimit = 50000 });
+        // MEDIUM-2 FIX: Initialize healthy segment cache with configurable size
+        _healthySegmentCache = new MemoryCache(new MemoryCacheOptions()
+        {
+            SizeLimit = configManager.GetSegmentCacheSize()
+        });
 
         // get server configurations
         var serverConfigs = configManager.GetUsenetServers();
@@ -106,38 +109,124 @@ public class UsenetStreamingClient : IDisposable
         // when config changes, update the servers
         configManager.OnConfigChanged += _configChangedHandler;
 
-        // wrap with caching
-        var cache = new MemoryCache(new MemoryCacheOptions() { SizeLimit = 8192 });
+        // MEDIUM-2 FIX: Wrap with caching using configurable cache size
+        var cache = new MemoryCache(new MemoryCacheOptions()
+        {
+            SizeLimit = configManager.GetArticleCacheSize()
+        });
         _client = new CachingNntpClient(_multiServerClient, cache);
     }
 
     /// <summary>
-    /// Dispose of resources and unsubscribe from events
+    /// Dispose of resources and unsubscribe from events.
+    /// HIGH-4 FIX: Properly dispose all IDisposable resources.
     /// </summary>
     public void Dispose()
     {
         if (Interlocked.CompareExchange(ref _disposed, 1, 0) == 1)
             return;
 
-        // Unsubscribe from all events to prevent memory leaks
-        if (_multiServerClient != null && _poolChangedHandler != null)
-            _multiServerClient.OnAggregateConnectionPoolChanged -= _poolChangedHandler;
-
-        if (_healthTracker != null)
+        try
         {
-            if (_serverUnavailableHandler != null)
-                _healthTracker.OnServerUnavailable -= _serverUnavailableHandler;
-            if (_healthResetHandler != null)
-                _healthTracker.OnAllServersHealthReset -= _healthResetHandler;
+            // Unsubscribe from all events to prevent memory leaks
+            if (_multiServerClient != null && _poolChangedHandler != null)
+                _multiServerClient.OnAggregateConnectionPoolChanged -= _poolChangedHandler;
+
+            if (_healthTracker != null)
+            {
+                if (_serverUnavailableHandler != null)
+                    _healthTracker.OnServerUnavailable -= _serverUnavailableHandler;
+                if (_healthResetHandler != null)
+                    _healthTracker.OnAllServersHealthReset -= _healthResetHandler;
+            }
+
+            if (_configManager != null && _configChangedHandler != null)
+                _configManager.OnConfigChanged -= _configChangedHandler;
+
+            // Dispose the segment cache
+            lock (_segmentCacheLock)
+            {
+                _healthySegmentCache?.Dispose();
+                _healthySegmentCache = null!;
+            }
+
+            // HIGH-4 FIX: Dispose clients (CachingNntpClient wraps MultiServerNntpClient)
+            // Disposing _client will dispose the cache and should dispose the underlying client
+            if (_client is IDisposable disposableClient)
+            {
+                disposableClient.Dispose();
+            }
+
+            // MultiServerNntpClient should be disposed by the wrapper,
+            // but dispose it directly if it wasn't (defensive coding)
+            if (_multiServerClient != null && !ReferenceEquals(_client, _multiServerClient))
+            {
+                _multiServerClient.Dispose();
+            }
         }
-
-        if (_configManager != null && _configChangedHandler != null)
-            _configManager.OnConfigChanged -= _configChangedHandler;
-
-        // Dispose the segment cache
-        lock (_segmentCacheLock)
+        catch (Exception ex)
         {
-            _healthySegmentCache?.Dispose();
+            // Log but don't throw - disposal should be best-effort
+            Serilog.Log.Error(ex, "Error during UsenetStreamingClient disposal");
+        }
+    }
+
+    /// <summary>
+    /// Async disposal of resources.
+    /// HIGH-4 FIX: Proper async disposal pattern.
+    /// </summary>
+    public async ValueTask DisposeAsync()
+    {
+        if (Interlocked.CompareExchange(ref _disposed, 1, 0) == 1)
+            return;
+
+        try
+        {
+            // Unsubscribe from events (same as Dispose)
+            if (_multiServerClient != null && _poolChangedHandler != null)
+                _multiServerClient.OnAggregateConnectionPoolChanged -= _poolChangedHandler;
+
+            if (_healthTracker != null)
+            {
+                if (_serverUnavailableHandler != null)
+                    _healthTracker.OnServerUnavailable -= _serverUnavailableHandler;
+                if (_healthResetHandler != null)
+                    _healthTracker.OnAllServersHealthReset -= _healthResetHandler;
+            }
+
+            if (_configManager != null && _configChangedHandler != null)
+                _configManager.OnConfigChanged -= _configChangedHandler;
+
+            // Dispose the segment cache
+            lock (_segmentCacheLock)
+            {
+                _healthySegmentCache?.Dispose();
+                _healthySegmentCache = null!;
+            }
+
+            // Async disposal of clients
+            if (_client is IAsyncDisposable asyncDisposableClient)
+            {
+                await asyncDisposableClient.DisposeAsync();
+            }
+            else if (_client is IDisposable disposableClient)
+            {
+                disposableClient.Dispose();
+            }
+
+            if (_multiServerClient != null && !ReferenceEquals(_client, _multiServerClient))
+            {
+                if (_multiServerClient is IAsyncDisposable asyncDisposable)
+                    await asyncDisposable.DisposeAsync();
+                else
+                    _multiServerClient.Dispose();
+            }
+
+            GC.SuppressFinalize(this);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Error during UsenetStreamingClient async disposal");
         }
     }
 
