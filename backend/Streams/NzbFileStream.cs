@@ -16,9 +16,10 @@ public class NzbFileStream(
     private CombinedStream? _innerStream;
     private int _disposed = 0;
 
+    // BUG FIX NEW-012: Use SortedDictionary for more efficient range lookups
     // Cache for segment seek results to avoid recalculating positions
-    // Key: byte offset, Value: (segment index, segment byte range)
-    private readonly Dictionary<long, InterpolationSearch.Result> _segmentCache = new();
+    // Key: start byte offset, Value: (segment index, segment byte range)
+    private readonly SortedDictionary<long, InterpolationSearch.Result> _segmentCache = new();
 
     public override void Flush()
     {
@@ -80,17 +81,32 @@ public class NzbFileStream(
 
     private async Task<InterpolationSearch.Result> SeekSegment(long byteOffset, CancellationToken ct)
     {
-        // Check if we have a cached result for this exact offset
-        if (_segmentCache.TryGetValue(byteOffset, out var cached))
-            return cached;
+        // BUG FIX NEW-012: Optimize cache lookup using sorted dictionary
+        // First check if we have a cached result that contains this offset
+        // SortedDictionary allows us to efficiently find the entry with the largest key <= byteOffset
+        InterpolationSearch.Result? candidateResult = null;
+        long candidateKey = -1;
 
-        // Check if we have a cached result that contains this offset
-        // This reuses work from previous seeks to nearby positions
-        foreach (var (_, cachedResult) in _segmentCache)
+        // Find the largest key that is <= byteOffset
+        foreach (var (key, value) in _segmentCache)
         {
-            if (cachedResult.FoundByteRange.Contains(byteOffset))
-                return cachedResult;
+            if (key > byteOffset)
+                break; // SortedDictionary is ordered, so we can stop here
+
+            if (value.FoundByteRange.Contains(byteOffset))
+                return value; // Found exact match
+
+            // Keep track of the closest entry for potential partial match
+            if (key > candidateKey)
+            {
+                candidateKey = key;
+                candidateResult = value;
+            }
         }
+
+        // Check if the candidate contains our offset
+        if (candidateResult.HasValue && candidateResult.Value.FoundByteRange.Contains(byteOffset))
+            return candidateResult.Value;
 
         // Not in cache, perform the search
         var result = await InterpolationSearch.Find(
@@ -105,10 +121,11 @@ public class NzbFileStream(
             ct
         );
 
-        // Cache the result for future seeks
+        // Cache the result for future seeks using the range start as the key
+        // This allows efficient range-based lookups
         // Keep cache size reasonable (max 100 entries)
         if (_segmentCache.Count < 100)
-            _segmentCache[byteOffset] = result;
+            _segmentCache[result.FoundByteRange.StartInclusive] = result;
 
         return result;
     }
@@ -148,6 +165,8 @@ public class NzbFileStream(
     {
         if (Interlocked.CompareExchange(ref _disposed, 1, 0) == 1) return;
         if (_innerStream != null) await _innerStream.DisposeAsync();
+        // BUG FIX NEW-003: Call base.DisposeAsync() to ensure proper disposal chain
+        await base.DisposeAsync();
         GC.SuppressFinalize(this);
     }
 }

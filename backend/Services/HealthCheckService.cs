@@ -16,7 +16,7 @@ namespace NzbWebDAV.Services;
 /// <summary>
 /// This service monitors for health checks
 /// </summary>
-public class HealthCheckService
+public class HealthCheckService : IDisposable
 {
     private readonly ConfigManager _configManager;
     private readonly UsenetStreamingClient _usenetClient;
@@ -25,6 +25,11 @@ public class HealthCheckService
 
     // Cache for missing segment IDs with 24 hour TTL to allow recovery from temporary issues
     private IMemoryCache _missingSegmentCache;
+    private readonly object _missingSegmentCacheLock = new object();
+
+    // Store event handler for proper cleanup
+    private EventHandler<ConfigChangedEventArgs>? _configChangedHandler;
+    private int _disposed = 0;
 
     public HealthCheckService
     (
@@ -40,20 +45,46 @@ public class HealthCheckService
         // Initialize missing segment cache with 10,000 entry limit
         _missingSegmentCache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 10000 });
 
-        _configManager.OnConfigChanged += (_, configEventArgs) =>
+        // Store event handler for proper cleanup
+        _configChangedHandler = (_, configEventArgs) =>
         {
             // when any usenet server configuration changes, clear the missing segments cache
             // this includes adding/removing/modifying servers in multi-server setup
             if (!_configManager.HasUsenetConfigChanged(configEventArgs.ChangedConfig)) return;
 
-            // Clear cache by disposing old cache and creating a new one
-            // Compact() only removes expired entries, not all entries
-            var oldCache = _missingSegmentCache;
-            _missingSegmentCache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 10000 });
-            oldCache.Dispose();
+            // BUG FIX NEW-004: Add locking to prevent race conditions on cache replacement
+            lock (_missingSegmentCacheLock)
+            {
+                // Clear cache by disposing old cache and creating a new one
+                // Compact() only removes expired entries, not all entries
+                var oldCache = _missingSegmentCache;
+                _missingSegmentCache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 10000 });
+                oldCache.Dispose();
+            }
         };
 
+        _configManager.OnConfigChanged += _configChangedHandler;
+
         _ = StartMonitoringService();
+    }
+
+    /// <summary>
+    /// Dispose of resources and unsubscribe from events
+    /// </summary>
+    public void Dispose()
+    {
+        if (Interlocked.CompareExchange(ref _disposed, 1, 0) == 1)
+            return;
+
+        // Unsubscribe from config changed event to prevent memory leak
+        if (_configManager != null && _configChangedHandler != null)
+            _configManager.OnConfigChanged -= _configChangedHandler;
+
+        // Dispose the missing segment cache
+        lock (_missingSegmentCacheLock)
+        {
+            _missingSegmentCache?.Dispose();
+        }
     }
 
     private async Task StartMonitoringService()
@@ -131,8 +162,10 @@ public class HealthCheckService
 
                 await Task.WhenAll(tasks);
                 cycleStartTime.Stop();
+                // BUG FIX NEW-009: Add defensive check for division by zero
+                var avgPerFile = davItems.Count > 0 ? cycleStartTime.ElapsedMilliseconds / davItems.Count : 0;
                 Log.Information("Parallel health check cycle completed: {FileCount} files in {ElapsedMs}ms ({AvgPerFile}ms/file)",
-                    davItems.Count, cycleStartTime.ElapsedMilliseconds, cycleStartTime.ElapsedMilliseconds / davItems.Count);
+                    davItems.Count, cycleStartTime.ElapsedMilliseconds, avgPerFile);
             }
             catch (Exception e)
             {
@@ -207,11 +240,26 @@ public class HealthCheckService
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|100");
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
 
-            // update the database
+            // BUG FIX NEW-010: Fix NextHealthCheck calculation to prevent overflow and handle edge cases
             davItem.LastHealthCheck = DateTimeOffset.UtcNow;
-            davItem.NextHealthCheck = davItem.ReleaseDate != null
-                ? davItem.ReleaseDate + 2 * (davItem.LastHealthCheck - davItem.ReleaseDate)
-                : null;
+
+            if (davItem.ReleaseDate != null && davItem.LastHealthCheck != null)
+            {
+                var age = davItem.LastHealthCheck.Value - davItem.ReleaseDate.Value;
+
+                // Cap the next check interval to a reasonable maximum (1 year)
+                var nextInterval = TimeSpan.FromTicks(Math.Min(age.Ticks * 2, TimeSpan.FromDays(365).Ticks));
+
+                // Ensure next check is not more than 1 year in the future
+                var nextCheck = davItem.LastHealthCheck.Value + nextInterval;
+                var maxCheck = DateTimeOffset.UtcNow + TimeSpan.FromDays(365);
+
+                davItem.NextHealthCheck = nextCheck < maxCheck ? nextCheck : maxCheck;
+            }
+            else
+            {
+                davItem.NextHealthCheck = null;
+            }
             dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
             {
                 Id = Guid.NewGuid(),
@@ -230,12 +278,16 @@ public class HealthCheckService
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
             if (FilenameUtil.IsImportantFileType(davItem.Name))
             {
-                // Cache missing segment for 24 hours to prevent repeated failed downloads
-                _missingSegmentCache.Set(e.SegmentId, true, new MemoryCacheEntryOptions
+                // BUG FIX NEW-004: Add locking to protect cache writes
+                lock (_missingSegmentCacheLock)
                 {
-                    AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24),
-                    Size = 1
-                });
+                    // Cache missing segment for 24 hours to prevent repeated failed downloads
+                    _missingSegmentCache.Set(e.SegmentId, true, new MemoryCacheEntryOptions
+                    {
+                        AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24),
+                        Size = 1
+                    });
+                }
             }
 
             // when usenet article is missing, perform repairs
@@ -422,11 +474,15 @@ public class HealthCheckService
 
     public void CheckCachedMissingSegmentIds(IEnumerable<string> segmentIds)
     {
-        foreach (var segmentId in segmentIds)
+        // BUG FIX NEW-004: Add locking to protect cache reads
+        lock (_missingSegmentCacheLock)
         {
-            if (_missingSegmentCache.TryGetValue(segmentId, out _))
+            foreach (var segmentId in segmentIds)
             {
-                throw new UsenetArticleNotFoundException(segmentId);
+                if (_missingSegmentCache.TryGetValue(segmentId, out _))
+                {
+                    throw new UsenetArticleNotFoundException(segmentId);
+                }
             }
         }
     }

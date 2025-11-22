@@ -235,7 +235,8 @@ public class ServerHealthTracker
 /// </summary>
 public class ServerHealthStats
 {
-    public string ServerId { get; set; } = string.Empty;
+    // BUG FIX NEW-014: Make ServerId required and non-nullable
+    public required string ServerId { get; init; } = string.Empty;
     public bool IsAvailable { get; set; }
     public int ConsecutiveFailures { get; set; }
     public int TotalSuccesses { get; set; }

@@ -12,7 +12,7 @@ using Usenet.Nzb;
 
 namespace NzbWebDAV.Clients.Usenet;
 
-public class UsenetStreamingClient
+public class UsenetStreamingClient : IDisposable
 {
     private readonly INntpClient _client;
     private readonly WebsocketManager _websocketManager;
@@ -21,6 +21,14 @@ public class UsenetStreamingClient
     private readonly ILogger<MultiServerNntpClient>? _logger;
     private MultiServerNntpClient? _multiServerClient;
     private IMemoryCache _healthySegmentCache;
+    private readonly object _segmentCacheLock = new object();
+
+    // Store event handlers for proper cleanup
+    private EventHandler<MultiServerNntpClient.AggregateConnectionPoolChangedEventArgs>? _poolChangedHandler;
+    private EventHandler<ServerUnavailableEventArgs>? _serverUnavailableHandler;
+    private EventHandler? _healthResetHandler;
+    private EventHandler<ConfigChangedEventArgs>? _configChangedHandler;
+    private int _disposed = 0;
 
     public UsenetStreamingClient(
         ConfigManager configManager,
@@ -43,23 +51,11 @@ public class UsenetStreamingClient
         // initialize the multi-server client
         _multiServerClient = new MultiServerNntpClient(serverConfigs, _healthTracker, _logger);
 
-        // Subscribe to aggregate connection pool events from multi-server client
-        _multiServerClient.OnAggregateConnectionPoolChanged += OnConnectionPoolChanged;
-
-        // Subscribe to server unavailable events to invalidate segment cache
-        // BUG FIX #2: Clear segment cache when circuit breaker opens
-        _healthTracker.OnServerUnavailable += OnServerUnavailable;
-
-        // Subscribe to health reset events to invalidate segment cache
-        // BUG FIX #3: Clear segment cache when all health is reset
-        _healthTracker.OnAllServersHealthReset += OnAllServersHealthReset;
-
-        // wrap with caching
-        var cache = new MemoryCache(new MemoryCacheOptions() { SizeLimit = 8192 });
-        _client = new CachingNntpClient(_multiServerClient, cache);
-
-        // when config changes, update the servers
-        configManager.OnConfigChanged += async (_, configEventArgs) =>
+        // Create and store event handlers for proper cleanup
+        _poolChangedHandler = OnConnectionPoolChanged;
+        _serverUnavailableHandler = OnServerUnavailable;
+        _healthResetHandler = OnAllServersHealthReset;
+        _configChangedHandler = async (_, configEventArgs) =>
         {
             // if unrelated config changed, do nothing
             if (!configManager.HasUsenetConfigChanged(configEventArgs.ChangedConfig))
@@ -95,6 +91,54 @@ public class UsenetStreamingClient
                     "Please check your Usenet server configuration.");
             }
         };
+
+        // Subscribe to aggregate connection pool events from multi-server client
+        _multiServerClient.OnAggregateConnectionPoolChanged += _poolChangedHandler;
+
+        // Subscribe to server unavailable events to invalidate segment cache
+        // BUG FIX #2: Clear segment cache when circuit breaker opens
+        _healthTracker.OnServerUnavailable += _serverUnavailableHandler;
+
+        // Subscribe to health reset events to invalidate segment cache
+        // BUG FIX #3: Clear segment cache when all health is reset
+        _healthTracker.OnAllServersHealthReset += _healthResetHandler;
+
+        // when config changes, update the servers
+        configManager.OnConfigChanged += _configChangedHandler;
+
+        // wrap with caching
+        var cache = new MemoryCache(new MemoryCacheOptions() { SizeLimit = 8192 });
+        _client = new CachingNntpClient(_multiServerClient, cache);
+    }
+
+    /// <summary>
+    /// Dispose of resources and unsubscribe from events
+    /// </summary>
+    public void Dispose()
+    {
+        if (Interlocked.CompareExchange(ref _disposed, 1, 0) == 1)
+            return;
+
+        // Unsubscribe from all events to prevent memory leaks
+        if (_multiServerClient != null && _poolChangedHandler != null)
+            _multiServerClient.OnAggregateConnectionPoolChanged -= _poolChangedHandler;
+
+        if (_healthTracker != null)
+        {
+            if (_serverUnavailableHandler != null)
+                _healthTracker.OnServerUnavailable -= _serverUnavailableHandler;
+            if (_healthResetHandler != null)
+                _healthTracker.OnAllServersHealthReset -= _healthResetHandler;
+        }
+
+        if (_configManager != null && _configChangedHandler != null)
+            _configManager.OnConfigChanged -= _configChangedHandler;
+
+        // Dispose the segment cache
+        lock (_segmentCacheLock)
+        {
+            _healthySegmentCache?.Dispose();
+        }
     }
 
     /// <summary>
@@ -133,13 +177,17 @@ public class UsenetStreamingClient
 
     /// <summary>
     /// Clear the segment cache by disposing and recreating it
+    /// BUG FIX NEW-005: Add locking to prevent race conditions on cache replacement
     /// </summary>
     private void ClearSegmentCache()
     {
-        // Dispose old cache and create new one to ensure ALL entries are cleared
-        var oldCache = _healthySegmentCache;
-        _healthySegmentCache = new MemoryCache(new MemoryCacheOptions() { SizeLimit = 50000 });
-        oldCache.Dispose();
+        lock (_segmentCacheLock)
+        {
+            // Dispose old cache and create new one to ensure ALL entries are cleared
+            var oldCache = _healthySegmentCache;
+            _healthySegmentCache = new MemoryCache(new MemoryCacheOptions() { SizeLimit = 50000 });
+            oldCache.Dispose();
+        }
     }
 
     public Task CheckAllSegmentsAsync
@@ -255,8 +303,13 @@ public class UsenetStreamingClient
         var serverHealthStats = GetServerHealthStats();
         if (serverHealthStats.Count > 1)
         {
+            // BUG FIX NEW-006: Add null safety for ServerId
             var healthSummary = string.Join(", ", serverHealthStats.Select(s =>
-                $"{s.ServerId.Substring(0, Math.Min(8, s.ServerId.Length))}: {(s.IsAvailable ? "OK" : "UNAVAILABLE")} ({s.TotalSuccesses}✓/{s.TotalFailures}✗)"));
+            {
+                var serverId = s.ServerId ?? "unknown";
+                var shortId = serverId.Length > 8 ? serverId.Substring(0, 8) : serverId;
+                return $"{shortId}: {(s.IsAvailable ? "OK" : "UNAVAILABLE")} ({s.TotalSuccesses}✓/{s.TotalFailures}✗)";
+            }));
             Serilog.Log.Information(
                 "Health check completed: {TotalSegments} segments, {SampledSegments} sampled ({SamplingPercentage:P0}), {CacheHits} cache hits ({CacheEfficiency:P0}), {CheckedSegments} network checks, {NewCacheEntries} new cache entries, {ElapsedMs}ms | Server health: [{HealthSummary}]",
                 totalSegments, sampledSegments, samplingPercentage, cacheHits, cacheEfficiency, segmentsToActuallyCheck.Count, newCacheEntries, startTime.ElapsedMilliseconds, healthSummary);
@@ -433,17 +486,23 @@ public class UsenetStreamingClient
 
     private bool IsSegmentCachedAsHealthy(string segmentId)
     {
-        return _healthySegmentCache.TryGetValue(segmentId, out _);
+        lock (_segmentCacheLock)
+        {
+            return _healthySegmentCache.TryGetValue(segmentId, out _);
+        }
     }
 
     private void CacheHealthySegment(string segmentId)
     {
-        var cacheTtl = _configManager.GetHealthySegmentCacheTtl();
-        _healthySegmentCache.Set(segmentId, true, new MemoryCacheEntryOptions
+        lock (_segmentCacheLock)
         {
-            AbsoluteExpirationRelativeToNow = cacheTtl,
-            Size = 1 // Each entry counts as 1 toward the size limit
-        });
+            var cacheTtl = _configManager.GetHealthySegmentCacheTtl();
+            _healthySegmentCache.Set(segmentId, true, new MemoryCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = cacheTtl,
+                Size = 1 // Each entry counts as 1 toward the size limit
+            });
+        }
     }
 
     public static async ValueTask<INntpClient> CreateNewConnection
