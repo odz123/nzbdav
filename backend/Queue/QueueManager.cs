@@ -145,7 +145,7 @@ public class QueueManager : IDisposable
     {
         // Queue is considered running if we haven't exceeded restart limit
         var isRunning = _queueRestartCount <= MaxRestartsPerHour;
-        return (isRunning, _queueRestartCount, _lastFailure);
+        return (isRunning, _queueRestartCount, _lastQueueFailure);
     }
 
     public (QueueItem? queueItem, int? progress) GetInProgressQueueItem()
