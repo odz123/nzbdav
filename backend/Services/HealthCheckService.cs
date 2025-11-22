@@ -31,7 +31,7 @@ public class HealthCheckService : IDisposable
     private readonly object _missingSegmentCacheLock = new object();
 
     // Store event handler for proper cleanup
-    private EventHandler<ConfigChangedEventArgs>? _configChangedHandler;
+    private EventHandler<ConfigManager.ConfigEventArgs>? _configChangedHandler;
     private int _disposed = 0;
 
     public HealthCheckService
