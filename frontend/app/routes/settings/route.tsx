@@ -207,6 +207,11 @@ function getChangedConfig(
     let configKeys = Object.keys(defaultConfig);
     for (const configKey of configKeys) {
         if (config[configKey] !== newConfig[configKey]) {
+            // Special handling for password fields: only send if non-empty
+            // Empty password means "keep current password"
+            if (configKey === "webdav.pass" && !newConfig[configKey]) {
+                continue; // Skip empty passwords
+            }
             changedConfig[configKey] = newConfig[configKey];
         }
     }

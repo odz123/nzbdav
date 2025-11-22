@@ -1,6 +1,6 @@
 import { Form } from "react-bootstrap";
 import styles from "./webdav.module.css"
-import { type Dispatch, type SetStateAction } from "react";
+import { type Dispatch, type SetStateAction, useState } from "react";
 import { className } from "~/utils/styling";
 
 type SabnzbdSettingsProps = {
@@ -9,6 +9,19 @@ type SabnzbdSettingsProps = {
 };
 
 export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
+    // Use separate state for password to avoid showing hash
+    const [passwordValue, setPasswordValue] = useState("");
+    const [isPasswordChanged, setIsPasswordChanged] = useState(false);
+
+    // Get the display value for password (empty if not changed, or new value if changed)
+    const displayPassword = isPasswordChanged ? passwordValue : "";
+
+    // Handle password change
+    const handlePasswordChange = (newPassword: string) => {
+        setPasswordValue(newPassword);
+        setIsPasswordChanged(true);
+        setNewConfig({ ...config, "webdav.pass": newPassword });
+    };
 
     return (
         <div className={styles.container}>
@@ -30,14 +43,15 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
             <Form.Group>
                 <Form.Label htmlFor="webdav-pass-input">WebDAV Password</Form.Label>
                 <Form.Control
-                    {...className([styles.input, !isValidPassword(config["webdav.pass"]) && styles.error])}
+                    {...className([styles.input, isPasswordChanged && !isValidPassword(passwordValue) && styles.error])}
                     type="password"
                     id="webdav-pass-input"
                     aria-describedby="webdav-pass-help"
-                    value={config["webdav.pass"]}
-                    onChange={e => setNewConfig({ ...config, "webdav.pass": e.target.value })} />
+                    placeholder="Enter new password to change"
+                    value={displayPassword}
+                    onChange={e => handlePasswordChange(e.target.value)} />
                 <Form.Text id="webdav-pass-help" muted>
-                    Use this password to connect to the webdav. Minimum 8 characters required.
+                    Use this password to connect to the webdav. Minimum 8 characters required. Leave blank to keep current password.
                 </Form.Text>
             </Form.Group>
             <hr />
@@ -94,8 +108,17 @@ export function isWebdavSettingsUpdated(config: Record<string, string>, newConfi
         || config["webdav.preview-par2-files"] !== newConfig["webdav.preview-par2-files"]
 }
 
-export function isWebdavSettingsValid(newConfig: Record<string, string>) {
-    return isValidUser(newConfig["webdav.user"]) && isValidPassword(newConfig["webdav.pass"]);
+export function isWebdavSettingsValid(newConfig: Record<string, string>, passwordChanged: boolean = true) {
+    // User must always be valid
+    if (!isValidUser(newConfig["webdav.user"])) return false;
+
+    // Password only needs to be valid if it's being changed
+    // If not changed (empty string), we keep the existing password
+    if (passwordChanged && newConfig["webdav.pass"]) {
+        return isValidPassword(newConfig["webdav.pass"]);
+    }
+
+    return true;
 }
 
 function isValidUser(user: string): boolean {
