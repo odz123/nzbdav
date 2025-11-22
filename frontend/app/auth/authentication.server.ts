@@ -10,6 +10,13 @@ type User = {
 };
 
 const oneYear = 60 * 60 * 24 * 365; // seconds
+
+// CRITICAL: SESSION_KEY must be set for production to prevent user logouts on restart
+if (!process.env.SESSION_KEY) {
+  console.warn('WARNING: SESSION_KEY environment variable is not set. Using a random key that will change on restart.');
+  console.warn('This will log out all users when the server restarts. Set SESSION_KEY in production!');
+}
+
 const sessionStorage = createCookieSessionStorage({
   cookie: {
     name: "__session",
