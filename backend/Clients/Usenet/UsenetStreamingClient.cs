@@ -27,7 +27,7 @@ public class UsenetStreamingClient : IDisposable, IAsyncDisposable
     private EventHandler<MultiServerNntpClient.AggregateConnectionPoolChangedEventArgs>? _poolChangedHandler;
     private EventHandler<ServerUnavailableEventArgs>? _serverUnavailableHandler;
     private EventHandler? _healthResetHandler;
-    private EventHandler<ConfigChangedEventArgs>? _configChangedHandler;
+    private EventHandler<ConfigManager.ConfigEventArgs>? _configChangedHandler;
     private int _disposed = 0;
 
     public UsenetStreamingClient(
