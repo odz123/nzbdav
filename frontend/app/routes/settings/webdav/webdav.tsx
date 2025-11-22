@@ -30,14 +30,14 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
             <Form.Group>
                 <Form.Label htmlFor="webdav-pass-input">WebDAV Password</Form.Label>
                 <Form.Control
-                    className={styles.input}
+                    {...className([styles.input, !isValidPassword(config["webdav.pass"]) && styles.error])}
                     type="password"
                     id="webdav-pass-input"
                     aria-describedby="webdav-pass-help"
                     value={config["webdav.pass"]}
                     onChange={e => setNewConfig({ ...config, "webdav.pass": e.target.value })} />
                 <Form.Text id="webdav-pass-help" muted>
-                    Use this password to connect to the webdav.
+                    Use this password to connect to the webdav. Minimum 8 characters required.
                 </Form.Text>
             </Form.Group>
             <hr />
@@ -95,10 +95,15 @@ export function isWebdavSettingsUpdated(config: Record<string, string>, newConfi
 }
 
 export function isWebdavSettingsValid(newConfig: Record<string, string>) {
-    return isValidUser(newConfig["webdav.user"]);
+    return isValidUser(newConfig["webdav.user"]) && isValidPassword(newConfig["webdav.pass"]);
 }
 
 function isValidUser(user: string): boolean {
     const regex = /^[A-Za-z0-9_-]+$/;
     return regex.test(user);
+}
+
+function isValidPassword(password: string): boolean {
+    const MIN_PASSWORD_LENGTH = 8;
+    return password && password.length >= MIN_PASSWORD_LENGTH;
 }

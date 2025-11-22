@@ -22,6 +22,8 @@ export async function loader({ request }: Route.LoaderArgs) {
     return { error: null };
 }
 
+const MIN_PASSWORD_LENGTH = 8;
+
 export default function Index({ loaderData, actionData }: Route.ComponentProps) {
     var pageData = actionData || loaderData;
     const [username, setUsername] = useState("");
@@ -42,6 +44,9 @@ export default function Index({ loaderData, actionData }: Route.ComponentProps) 
     } else if (password === "") {
         submitButtonDisabled = true;
         submitButtonText = "Password is required";
+    } else if (password.length < MIN_PASSWORD_LENGTH) {
+        submitButtonDisabled = true;
+        submitButtonText = `Password must be at least ${MIN_PASSWORD_LENGTH} characters`;
     } else if (password != confirmPassword) {
         submitButtonDisabled = true;
         submitButtonText = "Passwords must match";
@@ -106,6 +111,7 @@ export async function action({ request }: Route.ActionArgs) {
         const username = formData.get("username")?.toString();
         const password = formData.get("password")?.toString();
         if (!username || !password) throw new Error("username and password required");
+        if (password.length < MIN_PASSWORD_LENGTH) throw new Error(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
         var isSuccess = await backendClient.createAccount(username, password);
         if (!isSuccess) throw new Error("Unknown error creating account");
         var responseInit = await setSessionUser(request, username);
