@@ -1,4 +1,5 @@
 ﻿using System.Net;
+using Microsoft.Extensions.Caching.Memory;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Clients.RadarrSonarr.SonarrModels;
 using NzbWebDAV.Utils;
@@ -7,8 +8,19 @@ namespace NzbWebDAV.Clients.RadarrSonarr;
 
 public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
 {
-    private static readonly Dictionary<string, int> SeriesPathToSeriesIdCache = new();
-    private static readonly Dictionary<string, int> SymlinkOrStrmToEpisodeFileIdCache = new();
+    // PERF FIX #16: Replace unbounded static dictionaries with size-limited MemoryCache
+    // to prevent memory leaks in long-running instances
+    private static readonly MemoryCache SeriesPathToSeriesIdCache = new(new MemoryCacheOptions
+    {
+        SizeLimit = 1000, // Limit to 1000 series paths
+        ExpirationScanFrequency = TimeSpan.FromHours(1)
+    });
+
+    private static readonly MemoryCache SymlinkOrStrmToEpisodeFileIdCache = new(new MemoryCacheOptions
+    {
+        SizeLimit = 5000, // Limit to 5000 episode files
+        ExpirationScanFrequency = TimeSpan.FromHours(1)
+    });
 
     public Task<SonarrQueue> GetSonarrQueueAsync() =>
         Get<SonarrQueue>($"/queue?protocol=usenet&pageSize=5000");
@@ -67,7 +79,7 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
     private async Task<int?> GetEpisodeFileId(string symlinkOrStrmPath)
     {
         // if episode-file-id is found in the cache, verify it and return it
-        if (SymlinkOrStrmToEpisodeFileIdCache.TryGetValue(symlinkOrStrmPath, out var episodeFileId))
+        if (SymlinkOrStrmToEpisodeFileIdCache.TryGetValue(symlinkOrStrmPath, out int episodeFileId))
         {
             var episodeFile = await GetEpisodeFile(episodeFileId);
             if (episodeFile.Path == symlinkOrStrmPath) return episodeFileId;
@@ -77,11 +89,17 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
         var seriesId = await GetSeriesId(symlinkOrStrmPath);
         if (seriesId == null) return null;
 
-        // then use it to find all episode-files and repopulate the cache
+        // PERF NOTE: This fetches ALL episode files for the series to find one match
+        // This is a trade-off: first call is expensive but populates cache for future calls
+        // TODO: If Sonarr API supports filtering by path, use that instead
         int? result = null;
         foreach (var episodeFile in await GetAllEpisodeFiles(seriesId.Value))
         {
-            SymlinkOrStrmToEpisodeFileIdCache[episodeFile.Path!] = episodeFile.Id;
+            SymlinkOrStrmToEpisodeFileIdCache.Set(episodeFile.Path!, episodeFile.Id, new MemoryCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24),
+                Size = 1
+            });
             if (episodeFile.Path == symlinkOrStrmPath)
                 result = episodeFile.Id;
         }
@@ -94,10 +112,8 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
     {
         // get series-id from cache
         var cachedSeriesId = PathUtil.GetAllParentDirectories(symlinkOrStrmPath)
-            .Where(x => SeriesPathToSeriesIdCache.ContainsKey(x))
-            .Select(x => SeriesPathToSeriesIdCache[x])
-            .Select(x => (int?)x)
-            .FirstOrDefault();
+            .Select(path => SeriesPathToSeriesIdCache.TryGetValue(path, out int seriesId) ? (int?)seriesId : null)
+            .FirstOrDefault(id => id != null);
 
         // if found, verify and return it
         if (cachedSeriesId != null)
@@ -107,11 +123,17 @@ public class SonarrClient(string host, string apiKey) : ArrClient(host, apiKey)
                 return cachedSeriesId;
         }
 
-        // otherwise, fetch all series and repopulate the cache
+        // PERF NOTE: This fetches ALL series to find one match
+        // This is a trade-off: first call is expensive but populates cache for future calls
+        // TODO: If Sonarr API supports filtering by path, use that instead
         int? result = null;
         foreach (var series in await GetAllSeries())
         {
-            SeriesPathToSeriesIdCache[series.Path!] = series.Id;
+            SeriesPathToSeriesIdCache.Set(series.Path!, series.Id, new MemoryCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24),
+                Size = 1
+            });
             if (symlinkOrStrmPath.StartsWith(series.Path!))
                 result = series.Id;
         }

@@ -484,25 +484,21 @@ public class UsenetStreamingClient : IDisposable
         return _multiServerClient?.GetServerConfigs() ?? Array.Empty<UsenetServerConfig>();
     }
 
+    // PERF FIX #17: Remove redundant locks - MemoryCache is already thread-safe for TryGetValue/Set
+    // Locks are only needed for cache replacement operations (see ClearSegmentCache)
     private bool IsSegmentCachedAsHealthy(string segmentId)
     {
-        lock (_segmentCacheLock)
-        {
-            return _healthySegmentCache.TryGetValue(segmentId, out _);
-        }
+        return _healthySegmentCache.TryGetValue(segmentId, out _);
     }
 
     private void CacheHealthySegment(string segmentId)
     {
-        lock (_segmentCacheLock)
+        var cacheTtl = _configManager.GetHealthySegmentCacheTtl();
+        _healthySegmentCache.Set(segmentId, true, new MemoryCacheEntryOptions
         {
-            var cacheTtl = _configManager.GetHealthySegmentCacheTtl();
-            _healthySegmentCache.Set(segmentId, true, new MemoryCacheEntryOptions
-            {
-                AbsoluteExpirationRelativeToNow = cacheTtl,
-                Size = 1 // Each entry counts as 1 toward the size limit
-            });
-        }
+            AbsoluteExpirationRelativeToNow = cacheTtl,
+            Size = 1 // Each entry counts as 1 toward the size limit
+        });
     }
 
     public static async ValueTask<INntpClient> CreateNewConnection

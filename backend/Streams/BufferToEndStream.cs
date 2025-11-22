@@ -55,7 +55,9 @@ public sealed class BufferToEndStream : Stream
             minimumSegmentSize:        _segmentSize,
             useSynchronizationContext: false));
 
-        _pumpTask = Task.Run(() => PumpAsync(sourceStream), SigtermUtil.GetCancellationToken());
+        // PERF FIX #18: Remove unnecessary Task.Run - PumpAsync is already async
+        // Direct invocation avoids thread pool overhead
+        _pumpTask = PumpAsync(sourceStream);
     }
 
     // ───────────────────────────────────  background producer

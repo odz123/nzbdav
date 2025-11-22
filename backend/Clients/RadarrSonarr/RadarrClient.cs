@@ -1,4 +1,5 @@
 ﻿using System.Net;
+using Microsoft.Extensions.Caching.Memory;
 using NzbWebDAV.Clients.RadarrSonarr.BaseModels;
 using NzbWebDAV.Clients.RadarrSonarr.RadarrModels;
 
@@ -6,7 +7,13 @@ namespace NzbWebDAV.Clients.RadarrSonarr;
 
 public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
 {
-    private static readonly Dictionary<string, int> SymlinkOrStrmToMovieIdCache = new();
+    // PERF FIX #16: Replace unbounded static dictionary with size-limited MemoryCache
+    // to prevent memory leaks in long-running instances
+    private static readonly MemoryCache SymlinkOrStrmToMovieIdCache = new(new MemoryCacheOptions
+    {
+        SizeLimit = 2000, // Limit to 2000 movie files
+        ExpirationScanFrequency = TimeSpan.FromHours(1)
+    });
 
     public Task<RadarrMovie> GetMovieAsync(int id) =>
         Get<RadarrMovie>($"/movie/{id}");
@@ -40,22 +47,29 @@ public class RadarrClient(string host, string apiKey) : ArrClient(host, apiKey)
     {
         // if we already have the movie-id cached
         // then let's use it to find and return the corresponding movie-file-id
-        if (SymlinkOrStrmToMovieIdCache.TryGetValue(symlinkOrStrmPath, out var movieId))
+        if (SymlinkOrStrmToMovieIdCache.TryGetValue(symlinkOrStrmPath, out int movieId))
         {
             var movie = await GetMovieAsync(movieId);
             if (movie.MovieFile?.Path == symlinkOrStrmPath)
                 return (movie.MovieFile.Id!, movieId);
         }
 
-        // otherwise, let's fetch all movies, cache all movie files
-        // and return the matching movie-id and movie-file-id
+        // PERF NOTE: This fetches ALL movies to find one match
+        // This is a trade-off: first call is expensive but populates cache for future calls
+        // TODO: If Radarr API supports filtering by path, use that instead
         var allMovies = await GetMoviesAsync();
         (int movieFileId, int movieId)? result = null;
         foreach (var movie in allMovies)
         {
             var movieFile = movie.MovieFile;
             if (movieFile?.Path != null)
-                SymlinkOrStrmToMovieIdCache[movieFile.Path] = movie.Id;
+            {
+                SymlinkOrStrmToMovieIdCache.Set(movieFile.Path, movie.Id, new MemoryCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24),
+                    Size = 1
+                });
+            }
             if (movieFile?.Path == symlinkOrStrmPath)
                 result = (movieFile.Id!, movie.Id);
         }

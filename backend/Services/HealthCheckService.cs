@@ -287,16 +287,13 @@ public class HealthCheckService : IDisposable
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
             if (FilenameUtil.IsImportantFileType(davItem.Name))
             {
-                // BUG FIX NEW-004: Add locking to protect cache writes
-                lock (_missingSegmentCacheLock)
+                // PERF FIX #17: Remove redundant lock - MemoryCache.Set is already thread-safe
+                // Cache missing segment for 24 hours to prevent repeated failed downloads
+                _missingSegmentCache.Set(e.SegmentId, true, new MemoryCacheEntryOptions
                 {
-                    // Cache missing segment for 24 hours to prevent repeated failed downloads
-                    _missingSegmentCache.Set(e.SegmentId, true, new MemoryCacheEntryOptions
-                    {
-                        AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24),
-                        Size = 1
-                    });
-                }
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24),
+                    Size = 1
+                });
             }
 
             // when usenet article is missing, perform repairs
@@ -483,15 +480,13 @@ public class HealthCheckService : IDisposable
 
     public void CheckCachedMissingSegmentIds(IEnumerable<string> segmentIds)
     {
-        // BUG FIX NEW-004: Add locking to protect cache reads
-        lock (_missingSegmentCacheLock)
+        // PERF FIX #17: Remove redundant lock - MemoryCache.TryGetValue is already thread-safe
+        // Lock is only needed for cache replacement (see constructor and Dispose)
+        foreach (var segmentId in segmentIds)
         {
-            foreach (var segmentId in segmentIds)
+            if (_missingSegmentCache.TryGetValue(segmentId, out _))
             {
-                if (_missingSegmentCache.TryGetValue(segmentId, out _))
-                {
-                    throw new UsenetArticleNotFoundException(segmentId);
-                }
+                throw new UsenetArticleNotFoundException(segmentId);
             }
         }
     }
