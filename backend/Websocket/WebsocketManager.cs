@@ -1,4 +1,5 @@
-﻿using System.Net.WebSockets;
+﻿using System.Collections.Concurrent;
+using System.Net.WebSockets;
 using System.Text;
 using Microsoft.AspNetCore.Http;
 using NzbWebDAV.Extensions;
@@ -9,8 +10,9 @@ namespace NzbWebDAV.Websocket;
 
 public class WebsocketManager
 {
-    private readonly HashSet<WebSocket> _authenticatedSockets = [];
-    private readonly Dictionary<WebsocketTopic, string> _lastMessage = new();
+    // Use ConcurrentDictionary as a concurrent set (value is ignored, only key matters)
+    private readonly ConcurrentDictionary<WebSocket, byte> _authenticatedSockets = new();
+    private readonly ConcurrentDictionary<WebsocketTopic, string> _lastMessage = new();
 
     public async Task HandleRoute(HttpContext context)
     {
@@ -25,20 +27,16 @@ public class WebsocketManager
             }
 
             // mark the socket as authenticated
-            lock (_authenticatedSockets)
-                _authenticatedSockets.Add(webSocket);
+            _authenticatedSockets.TryAdd(webSocket, 0);
 
             // send current state for all topics
-            List<KeyValuePair<WebsocketTopic, string>>? lastMessage;
-            lock (_lastMessage) lastMessage = _lastMessage.ToList();
-            foreach (var message in lastMessage)
+            foreach (var message in _lastMessage)
                 if (message.Key.Type == WebsocketTopic.TopicType.State)
                     await SendMessage(webSocket, message.Key, message.Value);
 
             // wait for the socket to disconnect
             await WaitForDisconnected(webSocket);
-            lock (_authenticatedSockets)
-                _authenticatedSockets.Remove(webSocket);
+            _authenticatedSockets.TryRemove(webSocket, out _);
         }
         else
         {
@@ -53,12 +51,11 @@ public class WebsocketManager
     /// <param name="message">The message to send</param>
     public Task SendMessage(WebsocketTopic topic, string message)
     {
-        lock (_lastMessage) _lastMessage[topic] = message;
-        List<WebSocket>? authenticatedSockets;
-        lock (_authenticatedSockets) authenticatedSockets = _authenticatedSockets.ToList();
+        _lastMessage[topic] = message;
         var topicMessage = new TopicMessage(topic, message);
         var bytes = new ArraySegment<byte>(Encoding.UTF8.GetBytes(topicMessage.ToJson()));
-        return Task.WhenAll(authenticatedSockets.Select(x => SendMessage(x, bytes)));
+        // Get snapshot of keys (websockets) from concurrent dictionary
+        return Task.WhenAll(_authenticatedSockets.Keys.Select(x => SendMessage(x, bytes)));
     }
 
     /// <summary>

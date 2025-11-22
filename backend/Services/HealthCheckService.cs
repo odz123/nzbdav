@@ -65,7 +65,18 @@ public class HealthCheckService : IDisposable
 
         _configManager.OnConfigChanged += _configChangedHandler;
 
-        _ = StartMonitoringService();
+        // PERF FIX #11: Add error handling to fire-and-forget task
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await StartMonitoringService();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Log.Fatal(ex, "HealthCheckService failed unexpectedly - service has stopped");
+            }
+        });
     }
 
     /// <summary>
@@ -130,34 +141,32 @@ public class HealthCheckService : IDisposable
                 Log.Information("Starting parallel health check: {FileCount} files, {ConnectionsPerFile} connections each",
                     davItems.Count, connectionsPerFile);
 
-                var tasks = davItems.Select(davItem =>
+                // PERF FIX #5: Remove unnecessary Task.Run - async lambda already creates a task
+                var tasks = davItems.Select(async davItem =>
                 {
-                    // Each file gets its own database context to avoid concurrency issues
-                    return Task.Run(async () =>
+                    var fileStartTime = System.Diagnostics.Stopwatch.StartNew();
+                    try
                     {
-                        var fileStartTime = System.Diagnostics.Stopwatch.StartNew();
-                        try
+                        // Each file gets its own database context to avoid concurrency issues
+                        await using var itemDbContext = new DavDatabaseContext();
+                        var itemDbClient = new DavDatabaseClient(itemDbContext);
+                        // Re-fetch the item to avoid tracking conflicts
+                        var item = await itemDbClient.Ctx.Items.FindAsync(new object[] { davItem.Id }, cts.Token);
+                        if (item != null)
                         {
-                            await using var itemDbContext = new DavDatabaseContext();
-                            var itemDbClient = new DavDatabaseClient(itemDbContext);
-                            // Re-fetch the item to avoid tracking conflicts
-                            var item = await itemDbClient.Ctx.Items.FindAsync(new object[] { davItem.Id }, cts.Token);
-                            if (item != null)
-                            {
-                                await PerformHealthCheck(item, itemDbClient, connectionsPerFile, cts.Token);
-                                fileStartTime.Stop();
-                                Log.Information("File health check completed: {FileName} ({FileType}) in {ElapsedMs}ms",
-                                    item.Name, item.Type, fileStartTime.ElapsedMilliseconds);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
+                            await PerformHealthCheck(item, itemDbClient, connectionsPerFile, cts.Token);
                             fileStartTime.Stop();
-                            Log.Warning("File health check failed: {FileName} in {ElapsedMs}ms - {Error}",
-                                davItem.Name, fileStartTime.ElapsedMilliseconds, ex.Message);
-                            throw;
+                            Log.Information("File health check completed: {FileName} ({FileType}) in {ElapsedMs}ms",
+                                item.Name, item.Type, fileStartTime.ElapsedMilliseconds);
                         }
-                    }, cts.Token);
+                    }
+                    catch (Exception ex)
+                    {
+                        fileStartTime.Stop();
+                        Log.Warning("File health check failed: {FileName} in {ElapsedMs}ms - {Error}",
+                            davItem.Name, fileStartTime.ElapsedMilliseconds, ex.Message);
+                        throw;
+                    }
                 });
 
                 await Task.WhenAll(tasks);

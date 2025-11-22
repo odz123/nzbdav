@@ -21,7 +21,18 @@ public class ArrMonitoringService
     public ArrMonitoringService(ConfigManager configManager)
     {
         _configManager = configManager;
-        _ = StartMonitoringService();
+        // PERF FIX #11: Add error handling to fire-and-forget task
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await StartMonitoringService();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Log.Fatal(ex, "ArrMonitoringService failed unexpectedly - service has stopped");
+            }
+        });
     }
 
     private async Task StartMonitoringService()

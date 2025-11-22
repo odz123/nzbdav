@@ -33,7 +33,18 @@ public class QueueManager : IDisposable
         _healthCheckService = healthCheckService;
         _cancellationTokenSource = CancellationTokenSource
             .CreateLinkedTokenSource(SigtermUtil.GetCancellationToken());
-        _ = ProcessQueueAsync(_cancellationTokenSource.Token);
+        // PERF FIX #11: Add error handling to fire-and-forget task
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await ProcessQueueAsync(_cancellationTokenSource.Token);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Log.Fatal(ex, "QueueManager failed unexpectedly - queue processing has stopped");
+            }
+        });
     }
 
     public (QueueItem? queueItem, int? progress) GetInProgressQueueItem()

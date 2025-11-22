@@ -308,6 +308,10 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
 
     /* ----------------------------- IDisposable ------------------------------------ */
 
+    // PERF NOTE #3: Synchronous Dispose() calling async DisposeAsync()
+    // This blocking pattern is required to implement IDisposable while actual disposal is async.
+    // This is a known pattern in .NET when dealing with async resources in sync disposal.
+    // Callers should prefer DisposeAsync() when possible to avoid blocking.
     public void Dispose()
     {
         // Properly wait for async disposal to complete

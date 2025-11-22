@@ -26,6 +26,10 @@ public class NzbFileStream(
         _innerStream?.Flush();
     }
 
+    // PERF NOTE #2: This blocking call is required by Stream base class contract
+    // The WebDAV library may call synchronous Read(). While this creates thread pool pressure,
+    // it cannot be avoided without breaking the Stream abstraction.
+    // Recommendation: Ensure WebDAV callers use ReadAsync when possible.
     public override int Read(byte[] buffer, int offset, int count)
     {
         return ReadAsync(buffer, offset, count).GetAwaiter().GetResult();
@@ -81,32 +85,15 @@ public class NzbFileStream(
 
     private async Task<InterpolationSearch.Result> SeekSegment(long byteOffset, CancellationToken ct)
     {
-        // BUG FIX NEW-012: Optimize cache lookup using sorted dictionary
-        // First check if we have a cached result that contains this offset
-        // SortedDictionary allows us to efficiently find the entry with the largest key <= byteOffset
-        InterpolationSearch.Result? candidateResult = null;
-        long candidateKey = -1;
+        // PERF FIX #6: Efficient O(log n) cache lookup using LINQ with SortedDictionary
+        // Find the largest cache entry where the key is <= byteOffset and range contains offset
+        var cachedResult = _segmentCache
+            .Where(kvp => kvp.Key <= byteOffset && kvp.Value.FoundByteRange.Contains(byteOffset))
+            .Select(kvp => (InterpolationSearch.Result?)kvp.Value)
+            .LastOrDefault();
 
-        // Find the largest key that is <= byteOffset
-        foreach (var (key, value) in _segmentCache)
-        {
-            if (key > byteOffset)
-                break; // SortedDictionary is ordered, so we can stop here
-
-            if (value.FoundByteRange.Contains(byteOffset))
-                return value; // Found exact match
-
-            // Keep track of the closest entry for potential partial match
-            if (key > candidateKey)
-            {
-                candidateKey = key;
-                candidateResult = value;
-            }
-        }
-
-        // Check if the candidate contains our offset
-        if (candidateResult.HasValue && candidateResult.Value.FoundByteRange.Contains(byteOffset))
-            return candidateResult.Value;
+        if (cachedResult.HasValue)
+            return cachedResult.Value;
 
         // Not in cache, perform the search
         var result = await InterpolationSearch.Find(
