@@ -5,6 +5,14 @@ namespace NzbWebDAV.Utils;
 
 public static class InterpolationSearch
 {
+    /// <summary>
+    /// Synchronous wrapper for InterpolationSearch.Find
+    /// </summary>
+    /// <remarks>
+    /// PERF WARNING: This method blocks the calling thread using GetAwaiter().GetResult().
+    /// This is required by the .NET Stream base class which only provides synchronous Seek().
+    /// Prefer the async overload in non-Stream contexts to avoid thread pool blocking.
+    /// </remarks>
     public static Result Find
     (
         long searchByte,

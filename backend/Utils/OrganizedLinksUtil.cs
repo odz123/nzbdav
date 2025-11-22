@@ -1,4 +1,5 @@
-﻿using NzbWebDAV.Config;
+﻿using Microsoft.Extensions.Caching.Memory;
+using NzbWebDAV.Config;
 using NzbWebDAV.Database.Models;
 using NzbWebDAV.Extensions;
 
@@ -9,7 +10,13 @@ namespace NzbWebDAV.Utils;
 /// </summary>
 public static class OrganizedLinksUtil
 {
-    private static readonly Dictionary<Guid, string> Cache = new();
+    // PERF FIX #16: Replace unbounded static dictionary with size-limited MemoryCache
+    // to prevent memory leaks in long-running instances
+    private static readonly MemoryCache Cache = new(new MemoryCacheOptions
+    {
+        SizeLimit = 10000, // Limit to 10000 DavItem links
+        ExpirationScanFrequency = TimeSpan.FromHours(1)
+    });
 
     /// <summary>
     /// Searches organized media library for a symlink or strm pointing to the given target
@@ -43,7 +50,9 @@ public static class OrganizedLinksUtil
         out string? linkFromCache
     )
     {
-        return Cache.TryGetValue(targetDavItem.Id, out linkFromCache)
+        linkFromCache = null;
+        return Cache.TryGetValue(targetDavItem.Id, out string? cachedValue)
+               && (linkFromCache = cachedValue) != null
                && Verify(linkFromCache, targetDavItem, configManager);
     }
 
@@ -62,7 +71,11 @@ public static class OrganizedLinksUtil
         string? result = null;
         foreach (var davItemLink in GetLibraryDavItemLinks(configManager))
         {
-            Cache[targetDavItem.Id] = davItemLink.LinkPath;
+            Cache.Set(davItemLink.DavItemId, davItemLink.LinkPath, new MemoryCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24),
+                Size = 1
+            });
             if (davItemLink.DavItemId == targetDavItem.Id)
                 result = davItemLink.LinkPath;
         }
