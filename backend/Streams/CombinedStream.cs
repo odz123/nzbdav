@@ -28,8 +28,12 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams) : Stream
     public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
     {
         if (count == 0) return 0;
-        while (!cancellationToken.IsCancellationRequested)
+        while (true) // HIGH-2 FIX: Use explicit cancellation check instead of loop condition
         {
+            // HIGH-2 FIX: Explicit cancellation check throws OperationCanceledException
+            // This is better than silently returning 0 on cancellation
+            cancellationToken.ThrowIfCancellationRequested();
+
             // If we haven't read the first stream, read it.
             if (_currentStream == null)
             {
@@ -52,8 +56,6 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams) : Stream
             if (!_streams.MoveNext()) return 0;
             _currentStream = await _streams.Current;
         }
-
-        return 0;
     }
 
     public async Task DiscardBytesAsync(long count)

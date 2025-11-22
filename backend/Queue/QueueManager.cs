@@ -26,6 +26,12 @@ public class QueueManager : IDisposable
     private readonly WebsocketManager _websocketManager;
     private readonly HealthCheckService _healthCheckService;
 
+    // HIGH-3 FIX: Queue restart tracking
+    private int _queueRestartCount = 0;
+    private DateTime? _lastQueueFailure = null;
+    private readonly TimeSpan _maxRetryWindow = TimeSpan.FromHours(1);
+    private const int MaxRestartsPerHour = 10;
+
     public QueueManager(
         UsenetStreamingClient usenetClient,
         ConfigManager configManager,
@@ -39,18 +45,107 @@ public class QueueManager : IDisposable
         _healthCheckService = healthCheckService;
         _cancellationTokenSource = CancellationTokenSource
             .CreateLinkedTokenSource(SigtermUtil.GetCancellationToken());
-        // PERF FIX #11: Add error handling to fire-and-forget task
-        _ = Task.Run(async () =>
+
+        // HIGH-3 FIX: Start queue processing with auto-restart capability
+        _ = Task.Run(() => QueueProcessingWithRetry(_cancellationTokenSource.Token));
+    }
+
+    /// <summary>
+    /// Queue processing wrapper with automatic restart and exponential backoff.
+    /// HIGH-3 FIX: Ensures queue doesn't stay down after crashes.
+    /// </summary>
+    private async Task QueueProcessingWithRetry(CancellationToken ct)
+    {
+        var retryDelay = TimeSpan.FromSeconds(5);
+        const int maxRetryDelay = 300; // 5 minutes
+
+        while (!ct.IsCancellationRequested)
         {
             try
             {
-                await ProcessQueueAsync(_cancellationTokenSource.Token);
+                // Reset restart count if we've been running successfully for an hour
+                if (_lastQueueFailure.HasValue &&
+                    DateTime.UtcNow - _lastQueueFailure.Value > _maxRetryWindow)
+                {
+                    Log.Information(
+                        "Queue has been stable for {Hours} hour(s), resetting restart counter from {Count} to 0",
+                        _maxRetryWindow.TotalHours, _queueRestartCount);
+                    _queueRestartCount = 0;
+                    _lastQueueFailure = null;
+                }
+
+                // Run queue processing
+                await ProcessQueueAsync(ct);
+
+                // If we get here, ProcessQueueAsync exited normally (should not happen)
+                Log.Warning("ProcessQueueAsync exited normally - this should not happen");
+                retryDelay = TimeSpan.FromSeconds(5); // Reset delay
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (OperationCanceledException)
             {
-                Log.Fatal(ex, "QueueManager failed unexpectedly - queue processing has stopped");
+                // Normal shutdown
+                Log.Information("Queue processing cancelled - shutting down");
+                break;
             }
-        });
+            catch (Exception ex)
+            {
+                _queueRestartCount++;
+                _lastQueueFailure = DateTime.UtcNow;
+
+                // Check if we've exceeded restart limit
+                if (_queueRestartCount > MaxRestartsPerHour)
+                {
+                    Log.Fatal(ex,
+                        "Queue processing has failed {Count} times in the last hour. " +
+                        "Giving up to prevent infinite restart loop. Manual intervention required.",
+                        _queueRestartCount);
+
+                    // Send alert via websocket
+                    _websocketManager.SendMessage(
+                        WebsocketTopic.QueueError,
+                        $"Queue processing has failed {_queueRestartCount} times - stopped");
+
+                    // Exit retry loop
+                    break;
+                }
+
+                Log.Error(ex,
+                    "Queue processing failed (attempt {Attempt}/{MaxAttempts}) - restarting in {Delay}s",
+                    _queueRestartCount, MaxRestartsPerHour, retryDelay.TotalSeconds);
+
+                // Send websocket notification
+                _websocketManager.SendMessage(
+                    WebsocketTopic.QueueError,
+                    $"Queue processing error - restarting in {retryDelay.TotalSeconds}s");
+
+                // Wait before retry
+                try
+                {
+                    await Task.Delay(retryDelay, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+
+                // Exponential backoff
+                retryDelay = TimeSpan.FromSeconds(
+                    Math.Min(retryDelay.TotalSeconds * 2, maxRetryDelay));
+            }
+        }
+
+        Log.Information("Queue processing retry loop exited");
+    }
+
+    /// <summary>
+    /// Get queue health status for monitoring.
+    /// HIGH-3 FIX: Health endpoint for queue status.
+    /// </summary>
+    public (bool IsRunning, int RestartCount, DateTime? LastFailure) GetQueueHealth()
+    {
+        // Queue is considered running if we haven't exceeded restart limit
+        var isRunning = _queueRestartCount <= MaxRestartsPerHour;
+        return (isRunning, _queueRestartCount, _lastFailure);
     }
 
     public (QueueItem? queueItem, int? progress) GetInProgressQueueItem()
