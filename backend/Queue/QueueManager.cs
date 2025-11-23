@@ -291,6 +291,7 @@ public class QueueManager : IDisposable
     {
         _cancellationTokenSource?.Cancel();
         _cancellationTokenSource?.Dispose();
+        _semaphore?.Dispose();
     }
 
     private class InProgressQueueItem
