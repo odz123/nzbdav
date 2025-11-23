@@ -182,6 +182,7 @@ public sealed class BufferToEndStream : Stream
         {
             _publiclyDisposed = true;             // pump switches to discard mode
             _localCts.Cancel();                   // cancel any waiting readers
+            _localCts.Dispose();                  // dispose CancellationTokenSource
             _readLock.Dispose();                  // forbid further reads
 
             try { _pipe.Reader.Complete(); }      // maybe already done – ignore
@@ -197,6 +198,7 @@ public sealed class BufferToEndStream : Stream
 
         _publiclyDisposed = true;
         _localCts.Cancel();
+        _localCts.Dispose();
         _readLock.Dispose();
 
         try { _pipe.Reader.Complete(); }
