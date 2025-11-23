@@ -86,15 +86,19 @@ class Program
 
     /// <summary>
     /// Configure thread pool with CPU-based defaults and environment variable overrides.
-    /// Uses conservative settings that scale with available CPUs to prevent resource exhaustion.
+    /// OPTIMIZATION: Increased defaults for better concurrency under high streaming load.
     /// </summary>
     static void ConfigureThreadPool()
     {
         var cpuCount = Environment.ProcessorCount;
 
+        // OPTIMIZATION: Increased thread pool defaults to reduce latency under high load
+        // Higher minimums prevent request queueing when handling many concurrent streams
+        // Worker threads: increased from cpuCount*2 to cpuCount*4
+        // I/O threads: increased from cpuCount*4 to cpuCount*8
         // Allow override via environment variables for tuning in production
-        var minWorkerThreads = EnvironmentUtil.GetIntVariable("MIN_WORKER_THREADS") ?? (cpuCount * 2);
-        var minIoThreads = EnvironmentUtil.GetIntVariable("MIN_IO_THREADS") ?? (cpuCount * 4);
+        var minWorkerThreads = EnvironmentUtil.GetIntVariable("MIN_WORKER_THREADS") ?? (cpuCount * 4);
+        var minIoThreads = EnvironmentUtil.GetIntVariable("MIN_IO_THREADS") ?? (cpuCount * 8);
         var maxIoThreads = EnvironmentUtil.GetIntVariable("MAX_IO_THREADS");
 
         // Clamp to reasonable values to prevent misconfiguration

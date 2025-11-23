@@ -191,8 +191,10 @@ public class GetAndHeadHandlerPatch : IRequestHandler
         // Determine the number of bytes to read
         var bytesToRead = end - start + 1 ?? long.MaxValue;
 
-        // Read in 64KB blocks - use ArrayPool to reduce GC pressure
-        const int bufferSize = 64 * 1024;
+        // OPTIMIZATION: Increased buffer size from 64KB to 256KB for better streaming performance
+        // Larger buffers reduce context switches and improve throughput for high-bandwidth video streams
+        // Still uses ArrayPool to reduce GC pressure
+        const int bufferSize = 256 * 1024;
         var buffer = ArrayPool<byte>.Shared.Rent(bufferSize);
         try
         {
