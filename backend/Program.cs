@@ -176,9 +176,7 @@ class Program
         // run database migration, if necessary.
         if (args.Contains("--db-migration"))
         {
-            var argIndex = args.ToList().IndexOf("--db-migration");
-            var targetMigration = args.Length > argIndex + 1 ? args[argIndex + 1] : null;
-            await databaseContext.Database.MigrateAsync(targetMigration, SigtermUtil.GetCancellationToken());
+            await databaseContext.Database.MigrateAsync(SigtermUtil.GetCancellationToken());
             await ConfigureSqliteAsync(databaseContext);
             return;
         }
