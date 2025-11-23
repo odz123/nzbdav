@@ -62,11 +62,11 @@ public class CombinedStream(IEnumerable<Task<Stream>> streams) : Stream
     {
         if (count == 0) return;
         var remaining = count;
-        // Increased from 1KB to 256KB for much faster seeking
-        // When seeking within a segment, we need to discard unwanted bytes
-        // Larger buffer = fewer read operations = faster seeks
-        // Use ArrayPool to avoid heap allocation of large buffers
-        const int bufferSize = 256 * 1024;
+        // OPTIMIZATION: Dynamic buffer sizing - use smaller buffer for small seeks
+        // Typical seeks within segments are much smaller than 256KB
+        // This reduces memory pressure while still being fast for large seeks
+        // Min 4KB, max 256KB based on bytes to discard
+        var bufferSize = (int)Math.Min(256 * 1024, Math.Max(4096, count));
         var throwaway = ArrayPool<byte>.Shared.Rent(bufferSize);
         try
         {

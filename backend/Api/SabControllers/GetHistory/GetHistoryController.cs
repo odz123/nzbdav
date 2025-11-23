@@ -22,35 +22,24 @@ public class GetHistoryController(
         if (request.Category != null)
             query = query.Where(q => q.Category == request.Category);
 
-        // get total count
-        var totalCountPromise = query
-            .CountAsync(request.CancellationToken);
+        // OPTIMIZATION: Use single query with LEFT JOIN instead of 3 separate queries
+        // Fetch history items with their download directories in one go
+        var results = await (
+            from h in query.OrderByDescending(q => q.CreatedAt).Skip(request.Start).Take(request.Limit)
+            join d in dbClient.Ctx.Items on h.DownloadDirId equals d.Id into downloadDirs
+            from dir in downloadDirs.DefaultIfEmpty()
+            select new { HistoryItem = h, DownloadDir = dir }
+        ).ToArrayAsync(request.CancellationToken);
 
-        // get history items
-        var historyItemsPromise = query
-            .OrderByDescending(q => q.CreatedAt)
-            .Skip(request.Start)
-            .Take(request.Limit)
-            .ToArrayAsync(request.CancellationToken);
+        // Get total count in parallel (we still need this for pagination)
+        var totalCount = await query.CountAsync(request.CancellationToken);
 
-        // await results
-        var totalCount = await totalCountPromise;
-        var historyItems = await historyItemsPromise;
-
-        // get download folders
-        var downloadFolderIds = historyItems.Select(x => x.DownloadDirId).ToHashSet();
-        var davItems = await dbClient.Ctx.Items
-            .Where(x => downloadFolderIds.Contains(x.Id))
-            .ToArrayAsync(request.CancellationToken);
-        var davItemsDict = davItems
-            .ToDictionary(x => x.Id, x => x);
-
-        // get slots
-        var slots = historyItems
+        // Build response slots
+        var slots = results
             .Select(x =>
                 GetHistoryResponse.HistorySlot.FromHistoryItem(
-                    x,
-                    x.DownloadDirId != null ? davItemsDict.GetValueOrDefault(x.DownloadDirId.Value) : null,
+                    x.HistoryItem,
+                    x.DownloadDir,
                     configManager
                 )
             )

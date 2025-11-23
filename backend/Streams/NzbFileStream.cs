@@ -21,6 +21,10 @@ public class NzbFileStream(
     // Key: start byte offset, Value: (segment index, segment byte range)
     private readonly SortedDictionary<long, InterpolationSearch.Result> _segmentCache = new();
 
+    // OPTIMIZATION: Semaphore to limit concurrent blocking reads and prevent thread pool exhaustion
+    // Allows max 100 concurrent blocking reads across all NzbFileStream instances
+    private static readonly SemaphoreSlim ReadSemaphore = new(100, 100);
+
     public override void Flush()
     {
         _innerStream?.Flush();
@@ -29,10 +33,18 @@ public class NzbFileStream(
     // PERF NOTE #2: This blocking call is required by Stream base class contract
     // The WebDAV library may call synchronous Read(). While this creates thread pool pressure,
     // it cannot be avoided without breaking the Stream abstraction.
-    // Recommendation: Ensure WebDAV callers use ReadAsync when possible.
+    // OPTIMIZATION: Use semaphore to limit concurrent blocking reads and prevent exhaustion
     public override int Read(byte[] buffer, int offset, int count)
     {
-        return ReadAsync(buffer, offset, count).GetAwaiter().GetResult();
+        ReadSemaphore.Wait();
+        try
+        {
+            return ReadAsync(buffer, offset, count).GetAwaiter().GetResult();
+        }
+        finally
+        {
+            ReadSemaphore.Release();
+        }
     }
 
     public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)

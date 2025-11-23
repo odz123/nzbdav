@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using NzbWebDAV.Database.Models;
 
 namespace NzbWebDAV.Database;
@@ -6,6 +7,20 @@ namespace NzbWebDAV.Database;
 public sealed class DavDatabaseClient(DavDatabaseContext ctx)
 {
     public DavDatabaseContext Ctx => ctx;
+
+    // OPTIMIZATION: Cache directory sizes to avoid expensive recursive CTE queries
+    // Cache entries expire after 5 minutes and are limited to 10,000 entries
+    private static readonly MemoryCache DirectorySizeCache = new(new MemoryCacheOptions
+    {
+        SizeLimit = 10000,
+        ExpirationScanFrequency = TimeSpan.FromMinutes(1)
+    });
+
+    private static readonly MemoryCacheEntryOptions CacheOptions = new MemoryCacheEntryOptions
+    {
+        AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5),
+        Size = 1
+    };
 
     // file
     public async Task<DavItem?> GetFileById(string id)
@@ -38,9 +53,19 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
 
     public async Task<long> GetRecursiveSize(Guid dirId, CancellationToken ct = default)
     {
+        // OPTIMIZATION: Check cache first to avoid expensive recursive query
+        var cacheKey = $"DirSize_{dirId}";
+        if (DirectorySizeCache.TryGetValue<long>(cacheKey, out var cachedSize))
+        {
+            return cachedSize;
+        }
+
         if (dirId == DavItem.Root.Id)
         {
-            return await Ctx.Items.SumAsync(x => x.FileSize, ct) ?? 0;
+            var rootSize = await Ctx.Items.SumAsync(x => x.FileSize, ct) ?? 0;
+            // Cache root directory size
+            DirectorySizeCache.Set(cacheKey, rootSize, CacheOptions);
+            return rootSize;
         }
 
         const string sql = @"
@@ -90,7 +115,12 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
                 command.Parameters.Add(parameter);
 
                 var result = await command.ExecuteScalarAsync(ct);
-                return Convert.ToInt64(result);
+                var size = Convert.ToInt64(result);
+
+                // OPTIMIZATION: Cache the result for future queries
+                DirectorySizeCache.Set(cacheKey, size, CacheOptions);
+
+                return size;
             }
             catch (Exception ex) when (
                 ex is System.Data.Common.DbException ||
@@ -194,12 +224,20 @@ public sealed class DavDatabaseClient(DavDatabaseContext ctx)
     {
         if (deleteFiles)
         {
-            await Ctx.Items
-                .Where(d => Ctx.HistoryItems
-                    .Where(h => ids.Contains(h.Id) && h.DownloadDirId != null)
-                    .Select(h => h.DownloadDirId!)
-                    .Contains(d.Id))
-                .ExecuteDeleteAsync(ct);
+            // OPTIMIZATION: Pre-fetch download directory IDs to avoid nested subquery
+            // Old query had O(n²) complexity with nested WHERE/Contains
+            var downloadDirIds = await Ctx.HistoryItems
+                .Where(h => ids.Contains(h.Id) && h.DownloadDirId != null)
+                .Select(h => h.DownloadDirId!.Value)
+                .ToListAsync(ct);
+
+            // Use simple IN clause instead of nested subquery - much faster
+            if (downloadDirIds.Count > 0)
+            {
+                await Ctx.Items
+                    .Where(d => downloadDirIds.Contains(d.Id))
+                    .ExecuteDeleteAsync(ct);
+            }
         }
 
         await Ctx.HistoryItems

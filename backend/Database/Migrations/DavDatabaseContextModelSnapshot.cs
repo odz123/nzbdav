@@ -96,6 +96,8 @@ namespace NzbWebDAV.Database.Migrations
 
                     b.HasIndex("IdPrefix", "Type");
 
+                    b.HasIndex("NextHealthCheck", "Type");
+
                     b.HasIndex("ParentId", "Name")
                         .IsUnique();
 

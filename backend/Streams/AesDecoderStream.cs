@@ -1,4 +1,5 @@
-﻿using System.Security.Cryptography;
+﻿using System.Buffers;
+using System.Security.Cryptography;
 using NzbWebDAV.Models;
 
 namespace NzbWebDAV.Streams
@@ -8,10 +9,12 @@ namespace NzbWebDAV.Streams
         private readonly Stream _mStream;
         private Aes _aes; // keep Aes alive for transform lifetime
         private ICryptoTransform _mDecoder;
-        private readonly byte[] _plainBuffer; // decrypted bytes cache
+        private byte[]? _plainBuffer; // decrypted bytes cache (OPTIMIZATION: use ArrayPool)
+        private int _plainBufferSize; // actual size of plainBuffer
         private int _plainStart;
         private int _plainEnd;
-        private readonly byte[] _cipherBuffer; // buffer to read ciphertext blocks in chunks
+        private byte[]? _cipherBuffer; // buffer to read ciphertext blocks in chunks (OPTIMIZATION: use ArrayPool)
+        private int _cipherBufferSize; // actual size of cipherBuffer
 
         private long _mWritten; // number of decoded bytes returned already
         private readonly long _mLimit;
@@ -45,13 +48,18 @@ namespace NzbWebDAV.Streams
 
             _mDecoder = _aes.CreateDecryptor(_mKey, _mBaseIv);
 
+            // OPTIMIZATION: Use ArrayPool to rent buffers instead of allocating on heap
             // plain buffer - capacity should be multiple of block size and >= one block
             var psize = DefaultPlainBufferSize;
             if ((psize & (BlockSize - 1)) != 0) psize += BlockSize - (psize & (BlockSize - 1));
             if (psize < BlockSize) psize = BlockSize;
-            _plainBuffer = new byte[psize];
 
-            _cipherBuffer = new byte[BlockSize * DefaultCipherBufferBlocks];
+            _plainBuffer = ArrayPool<byte>.Shared.Rent(psize);
+            _plainBufferSize = psize; // track intended size, rented array may be larger
+
+            var csize = BlockSize * DefaultCipherBufferBlocks;
+            _cipherBuffer = ArrayPool<byte>.Shared.Rent(csize);
+            _cipherBufferSize = csize; // track intended size
 
             _plainStart = _plainEnd = 0;
             _mWritten = 0;
@@ -68,6 +76,18 @@ namespace NzbWebDAV.Streams
                     _mStream.Dispose();
                     _mDecoder?.Dispose();
                     _aes?.Dispose();
+
+                    // OPTIMIZATION: Return rented buffers to ArrayPool
+                    if (_plainBuffer != null)
+                    {
+                        ArrayPool<byte>.Shared.Return(_plainBuffer, clearArray: true);
+                        _plainBuffer = null;
+                    }
+                    if (_cipherBuffer != null)
+                    {
+                        ArrayPool<byte>.Shared.Return(_cipherBuffer, clearArray: true);
+                        _cipherBuffer = null;
+                    }
                 }
             }
             finally
@@ -138,9 +158,9 @@ namespace NzbWebDAV.Streams
             // Now read ciphertext and decrypt as many blocks as needed/fit
             while (toReturnAllowed > 0 && _mWritten < _mLimit)
             {
-                // Read up to cipherBuffer.Length bytes from underlying stream in one ReadAsync
+                // Read up to cipherBuffer size bytes from underlying stream in one ReadAsync
                 int cipherRead = 0;
-                int firstRead = await _mStream.ReadAsync(_cipherBuffer, 0, _cipherBuffer.Length, ct)
+                int firstRead = await _mStream.ReadAsync(_cipherBuffer, 0, _cipherBufferSize, ct)
                     .ConfigureAwait(false);
                 if (firstRead == 0)
                 {
@@ -171,7 +191,7 @@ namespace NzbWebDAV.Streams
                 while (decryptOffset < cipherRead)
                 {
                     int cipherRemaining = cipherRead - decryptOffset;
-                    int plainSpace = _plainBuffer.Length - _plainEnd;
+                    int plainSpace = _plainBufferSize - _plainEnd;
                     // If there is no plain space, compact the buffer if possible
                     if (plainSpace < BlockSize && _plainStart > 0)
                     {
@@ -180,7 +200,7 @@ namespace NzbWebDAV.Streams
                             Buffer.BlockCopy(_plainBuffer, _plainStart, _plainBuffer, 0, existing);
                         _plainStart = 0;
                         _plainEnd = existing;
-                        plainSpace = _plainBuffer.Length - _plainEnd;
+                        plainSpace = _plainBufferSize - _plainEnd;
                     }
 
                     // How many cipher bytes (multiple of blocksize) can we process now?
@@ -313,7 +333,7 @@ namespace NzbWebDAV.Streams
                 int remainder = BlockSize - blockOffset;
                 if (remainder > 0)
                 {
-                    if (remainder > _plainBuffer.Length)
+                    if (remainder > _plainBufferSize)
                         throw new InvalidOperationException("Plain buffer too small for remainder.");
                     Buffer.BlockCopy(tempPlain, blockOffset, _plainBuffer, 0, remainder);
                     _plainStart = 0;

@@ -122,6 +122,34 @@ class Program
             cpuCount, actualMinWorker, actualMinIo, actualMaxWorker, actualMaxIo);
     }
 
+    /// <summary>
+    /// Configure SQLite for optimal performance with Write-Ahead Logging (WAL) mode.
+    /// WAL mode improves concurrency by allowing readers and writers to operate simultaneously.
+    /// </summary>
+    static async Task ConfigureSqliteAsync(DavDatabaseContext context)
+    {
+        // Enable WAL mode for better concurrency - readers don't block writers
+        await context.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;");
+
+        // Use NORMAL synchronous mode for better performance while maintaining safety in WAL mode
+        await context.Database.ExecuteSqlRawAsync("PRAGMA synchronous=NORMAL;");
+
+        // Configure cache size (negative = KB, positive = pages)
+        var cacheSizeMb = EnvironmentUtil.GetIntVariable("SQLITE_CACHE_SIZE_MB") ?? 64;
+        var cacheSizeKb = -cacheSizeMb * 1024; // Negative value means KB
+        await context.Database.ExecuteSqlRawAsync($"PRAGMA cache_size={cacheSizeKb};");
+
+        // Store temp tables and indices in memory for better performance
+        await context.Database.ExecuteSqlRawAsync("PRAGMA temp_store=MEMORY;");
+
+        // Enable memory-mapped I/O for better read performance (256MB)
+        await context.Database.ExecuteSqlRawAsync("PRAGMA mmap_size=268435456;");
+
+        Log.Information(
+            "SQLite configured: WAL mode enabled, {CacheSizeMb}MB cache, NORMAL synchronous, memory temp_store",
+            cacheSizeMb);
+    }
+
     static async Task Main(string[] args)
     {
         // Initialize logger first so ConfigureThreadPool can log
@@ -151,8 +179,12 @@ class Program
             var argIndex = args.ToList().IndexOf("--db-migration");
             var targetMigration = args.Length > argIndex + 1 ? args[argIndex + 1] : null;
             await databaseContext.Database.MigrateAsync(targetMigration, SigtermUtil.GetCancellationToken());
+            await ConfigureSqliteAsync(databaseContext);
             return;
         }
+
+        // Configure SQLite for optimal performance
+        await ConfigureSqliteAsync(databaseContext);
 
         // initialize the config-manager
         var configManager = new ConfigManager();

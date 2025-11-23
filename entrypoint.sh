@@ -81,7 +81,10 @@ BACKEND_PID=$!
 # Wait for backend health check
 echo "Waiting for backend to start."
 MAX_BACKEND_HEALTH_RETRIES=${MAX_BACKEND_HEALTH_RETRIES:-30}
-MAX_BACKEND_HEALTH_RETRY_DELAY=${MAX_BACKEND_HEALTH_RETRY_DELAY:-1}
+# OPTIMIZATION: Use exponential backoff for faster startup
+# Start with 0.1s delay and increase up to 2s max
+RETRY_DELAY=0.1
+MAX_DELAY=2
 i=0
 while true; do
     echo "Checking backend health: $BACKEND_URL/health ..."
@@ -98,7 +101,9 @@ while true; do
         exit 1
     fi
 
-    sleep "$MAX_BACKEND_HEALTH_RETRY_DELAY"
+    sleep "$RETRY_DELAY"
+    # Exponential backoff: multiply delay by 1.5, cap at MAX_DELAY
+    RETRY_DELAY=$(awk "BEGIN {d=$RETRY_DELAY*1.5; print (d>$MAX_DELAY)?$MAX_DELAY:d}")
 done
 
 # Run frontend as appuser in background
