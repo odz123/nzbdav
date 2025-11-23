@@ -314,16 +314,16 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     public void Dispose()
     {
         // BUG FIX: Use Task.Run to execute on thread pool thread, avoiding sync context deadlocks
-        // Add timeout to prevent hanging indefinitely
+        // OPTIMIZATION: Reduced timeout from 30s to 5s for faster shutdown
         try
         {
             var disposeTask = Task.Run(async () => await DisposeAsync());
 
-            if (!disposeTask.Wait(TimeSpan.FromSeconds(30)))
+            if (!disposeTask.Wait(TimeSpan.FromSeconds(5)))
             {
                 // Timeout occurred - log but don't throw in Dispose
                 System.Diagnostics.Debug.WriteLine(
-                    "ConnectionPool disposal timed out after 30 seconds. " +
+                    "ConnectionPool disposal timed out after 5 seconds. " +
                     "Some connections may not have been properly disposed.");
             }
         }

@@ -114,6 +114,10 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
             e.HasIndex(i => new { i.IdPrefix, i.Type });
 
             e.HasIndex(i => new { i.Type, i.NextHealthCheck, i.ReleaseDate, i.Id });
+
+            // OPTIMIZATION: Separate index for health check queue queries
+            // Queries filter by NextHealthCheck first, then Type - this index optimizes that pattern
+            e.HasIndex(i => new { i.NextHealthCheck, i.Type });
         });
 
         // DavNzbFile

@@ -8,7 +8,25 @@ export default defineConfig(({ isSsrBuild }) => ({
     allowedHosts: [".net"],
   },
   build: {
-    rollupOptions: isSsrBuild ? { input: "./server/app.ts" } : undefined,
+    rollupOptions: isSsrBuild
+      ? { input: "./server/app.ts" }
+      : {
+          // OPTIMIZATION: Code splitting for better initial load performance
+          output: {
+            manualChunks: {
+              // Vendor chunks - separate large libraries
+              'react-vendor': ['react', 'react-dom', 'react-router'],
+              'bootstrap-vendor': ['bootstrap', 'react-bootstrap'],
+              // Utility chunks - group by functionality
+              'utils': [
+                './app/utils/websocket-util',
+                './app/utils/file-size',
+                './app/utils/path',
+                './app/utils/styling'
+              ]
+            }
+          }
+        },
   },
   plugins: [
     tailwindcss(),
