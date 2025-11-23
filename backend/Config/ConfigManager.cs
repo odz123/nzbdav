@@ -431,6 +431,24 @@ public class ConfigManager : IDisposable
     }
 
     /// <summary>
+    /// Get connection pool idle timeout in seconds.
+    /// OPTIMIZATION: Make connection pool idle timeout configurable to reduce latency.
+    /// Connections idle for longer than this timeout will be closed to free resources.
+    /// </summary>
+    public int GetConnectionPoolIdleTimeoutSeconds()
+    {
+        var value = StringUtil.EmptyToNull(GetConfigValue("connections.idle-timeout-seconds"))
+            ?? Environment.GetEnvironmentVariable("CONNECTION_IDLE_TIMEOUT_SECONDS")
+            ?? "30";
+
+        if (!int.TryParse(value, out var result))
+            result = 30;
+
+        // Clamp to reasonable values: 5 seconds to 5 minutes
+        return Math.Clamp(result, 5, 300);
+    }
+
+    /// <summary>
     /// Dispose of resources.
     /// LOW-1 FIX: Properly dispose SemaphoreSlim.
     /// </summary>

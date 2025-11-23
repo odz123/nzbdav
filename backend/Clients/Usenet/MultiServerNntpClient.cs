@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using NzbWebDAV.Clients.Usenet.Connections;
 using NzbWebDAV.Clients.Usenet.Models;
+using NzbWebDAV.Config;
 using NzbWebDAV.Exceptions;
 using NzbWebDAV.Streams;
 using Usenet.Exceptions;
@@ -17,6 +18,7 @@ public class MultiServerNntpClient : INntpClient
 {
     private readonly List<ServerInstance> _servers = new();
     private readonly ServerHealthTracker _healthTracker;
+    private readonly ConfigManager? _configManager;
     private readonly ILogger<MultiServerNntpClient>? _logger;
     private readonly SemaphoreSlim _updateLock = new(1, 1);
     private readonly Dictionary<string, ServerConnectionStats> _serverStats = new();
@@ -30,9 +32,11 @@ public class MultiServerNntpClient : INntpClient
     public MultiServerNntpClient(
         IEnumerable<UsenetServerConfig> serverConfigs,
         ServerHealthTracker healthTracker,
-        ILogger<MultiServerNntpClient>? logger = null)
+        ILogger<MultiServerNntpClient>? logger = null,
+        ConfigManager? configManager = null)
     {
         _healthTracker = healthTracker;
+        _configManager = configManager;
         _logger = logger;
         InitializeServers(serverConfigs);
     }
@@ -93,7 +97,15 @@ public class MultiServerNntpClient : INntpClient
                 config.Host, config.Port, config.UseSsl,
                 config.Username, config.Password, ct);
 
-        var connectionPool = new ConnectionPool<INntpClient>(config.MaxConnections, createConnection);
+        // OPTIMIZATION: Use configurable idle timeout from environment variable
+        // Default is 30 seconds if no config manager is provided
+        var idleTimeoutSeconds = _configManager?.GetConnectionPoolIdleTimeoutSeconds() ?? 30;
+        var idleTimeout = TimeSpan.FromSeconds(idleTimeoutSeconds);
+
+        var connectionPool = new ConnectionPool<INntpClient>(
+            config.MaxConnections,
+            createConnection,
+            idleTimeout: idleTimeout);
 
         // Subscribe to connection pool events to aggregate stats across all servers
         connectionPool.OnConnectionPoolChanged += OnServerConnectionPoolChanged;

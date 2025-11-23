@@ -52,7 +52,7 @@ public class UsenetStreamingClient : IDisposable, IAsyncDisposable
         var serverConfigs = configManager.GetUsenetServers();
 
         // initialize the multi-server client
-        _multiServerClient = new MultiServerNntpClient(serverConfigs, _healthTracker, _logger);
+        _multiServerClient = new MultiServerNntpClient(serverConfigs, _healthTracker, _logger, configManager);
 
         // Create and store event handlers for proper cleanup
         _poolChangedHandler = OnConnectionPoolChanged;

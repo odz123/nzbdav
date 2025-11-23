@@ -22,6 +22,7 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     /* -------------------------------- configuration -------------------------------- */
 
     public TimeSpan IdleTimeout { get; }
+    public TimeSpan AcquisitionTimeout { get; }
     public event EventHandler<ConnectionPoolChangedEventArgs>? OnConnectionPoolChanged;
 
     private readonly Func<CancellationToken, ValueTask<T>> _factory;
@@ -42,7 +43,8 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
     public ConnectionPool(
         int maxConnections,
         Func<CancellationToken, ValueTask<T>> connectionFactory,
-        TimeSpan? idleTimeout = null)
+        TimeSpan? idleTimeout = null,
+        TimeSpan? acquisitionTimeout = null)
     {
         if (maxConnections <= 0)
             throw new ArgumentOutOfRangeException(nameof(maxConnections));
@@ -50,6 +52,9 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         _factory = connectionFactory
                    ?? throw new ArgumentNullException(nameof(connectionFactory));
         IdleTimeout = idleTimeout ?? TimeSpan.FromSeconds(30);
+        // OPTIMIZATION: Default 30-second timeout for connection acquisition to prevent indefinite waits
+        // Can be overridden via constructor parameter for fine-tuned control
+        AcquisitionTimeout = acquisitionTimeout ?? TimeSpan.FromSeconds(30);
 
         _maxConnections = maxConnections;
         _gate = new ExtendedSemaphoreSlim(maxConnections, maxConnections);
@@ -70,11 +75,22 @@ public sealed class ConnectionPool<T> : IDisposable, IAsyncDisposable
         if (reservedCount < 0 || reservedCount >= _maxConnections)
             reservedCount = 0;
 
-        // Make caller cancellation also cancel the wait on the gate.
+        // OPTIMIZATION: Apply acquisition timeout to prevent indefinite waits
+        // Combine caller cancellation, disposal cancellation, and timeout
+        using var timeoutCts = new CancellationTokenSource(AcquisitionTimeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken, _sweepCts.Token);
+            cancellationToken, _sweepCts.Token, timeoutCts.Token);
 
-        await _gate.WaitAsync(reservedCount, linked.Token).ConfigureAwait(false);
+        try
+        {
+            await _gate.WaitAsync(reservedCount, linked.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"Failed to acquire connection from pool within {AcquisitionTimeout.TotalSeconds}s timeout. " +
+                $"Pool may be exhausted (max: {_maxConnections} connections).");
+        }
 
         // Pool might have been disposed after wait returned:
         if (Volatile.Read(ref _disposed) == 1)

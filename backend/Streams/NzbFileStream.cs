@@ -122,8 +122,9 @@ public class NzbFileStream(
 
         // Cache the result for future seeks using the range start as the key
         // This allows efficient range-based lookups
-        // Keep cache size reasonable (max 100 entries)
-        if (_segmentCache.Count < 100)
+        // OPTIMIZATION: Increased cache size from 100 to 1000 entries to reduce network round-trips
+        // Large video files with frequent seeks benefit from larger cache
+        if (_segmentCache.Count < 1000)
             _segmentCache[result.FoundByteRange.StartInclusive] = result;
 
         return result;
